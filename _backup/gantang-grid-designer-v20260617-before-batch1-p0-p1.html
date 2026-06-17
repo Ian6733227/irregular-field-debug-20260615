@@ -1193,9 +1193,6 @@
     #printReport {
       display: none;
     }
-    #printFallbackNotice {
-      display: none;
-    }
 
     @media print {
       body {
@@ -1203,18 +1200,6 @@
         background: #fff;
       }
       .app {
-        display: none;
-      }
-      /* 未通过“打印 / PDF”按钮生成报表时（如直接 Ctrl+P），显示提示而不是空白页。 */
-      #printFallbackNotice {
-        display: block;
-        padding: 30px;
-        font-size: 14px;
-        line-height: 1.8;
-        color: #000;
-        background: #fff;
-      }
-      #printReport[data-print-ready="true"] ~ #printFallbackNotice {
         display: none;
       }
       #printReport[data-print-ready="true"] {
@@ -1695,19 +1680,14 @@
     </div>
   </div>
 
-  <div id="printFallbackNotice">
-    <h1>未生成打印报表</h1>
-    <p>请先在页面里点击「打印 / PDF」按钮生成排布报表，再打印或导出 PDF。</p>
-    <p>直接使用浏览器的打印（Ctrl/Cmd + P）不会输出报表内容，这是为了避免打印到过期或未通过交付门禁的数据。</p>
-  </div>
-
   <!-- JavaScript App Code -->
   <script>
     const urlParams = new URLSearchParams(window.location.search);
     const urlImageOverride = sanitizeRelativeImagePath(urlParams.get('image'));
     const configuredHostOriginParam = urlParams.get('parentOrigin') || urlParams.get('hostOrigin');
     const DEBUG_MODE = urlParams.get('debug') === '1'
-      || urlParams.get('debug') === 'true';
+      || urlParams.get('debug') === 'true'
+      || window.location.pathname.includes('irregular-field-debug');
     const defaultImagePath = urlImageOverride || 'gantang-page08-plan.png';
     let currentImagePath = defaultImagePath;
     let currentImageDataUrl = null;
@@ -1726,7 +1706,6 @@
     const DIRECT_DRAWING_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'svg'];
     const MAX_DELIVERY_TILES = 50000;
     const MAX_GRID_CANDIDATE_CELLS = 120000;
-    const MAX_IGNORED_OBSTACLE_CANDIDATES = 200;
     const MIN_REASONABLE_METERS_PER_PIXEL = 0.001;
     const MAX_REASONABLE_METERS_PER_PIXEL = 1;
     let bridgeReadySent = false;
@@ -1883,8 +1862,6 @@
 	    };
 
     const image = new Image();
-    // 允许同源/带 CORS 头的底图在 canvas 上做 getImageData / toDataURL 而不污染画布。
-    image.crossOrigin = 'anonymous';
     image.src = currentImageSource;
     let appInitialized = false;
 
@@ -2265,18 +2242,6 @@
       ));
     }
 
-    // 防止反复扫描后 ignored 候选无限堆积：pending/confirmed 全部保留，ignored 只保留最近 N 个。
-    function trimIgnoredObstacleCandidates() {
-      normalizeObstacleDetectionState();
-      const candidates = state.obstacleDetection.candidates;
-      const ignored = candidates.filter(c => c.status === 'ignored');
-      if (ignored.length <= MAX_IGNORED_OBSTACLE_CANDIDATES) return;
-      const keepIgnored = new Set(ignored.slice(-MAX_IGNORED_OBSTACLE_CANDIDATES).map(c => c.id));
-      state.obstacleDetection.candidates = candidates.filter(c => (
-        c.status !== 'ignored' || keepIgnored.has(c.id)
-      ));
-    }
-
     function buildProjectWarnings() {
       return [
         ...(state.scale.needsCalibration ? [{
@@ -2427,19 +2392,6 @@
         ));
       }
 
-      // 漏检防线（非阻断）：本项目扫描过、但所有候选都被忽略且无一确认，
-      // 说明可能漏扣了真实柱/树。仅在扫描过（runs 非空）时提示，避免误伤“本就无障碍”的正常项目。
-      const obstacleGateSummary = obstacleDetectionSummary();
-      const obstacleScanned = Array.isArray(state.obstacleDetection.runs) && state.obstacleDetection.runs.length > 0;
-      if (obstacleScanned && obstacleGateSummary.confirmed === 0 && obstacleGateSummary.ignored > 0) {
-        warnings.push(severityEntry(
-          'warning',
-          'obstacle_candidates_all_ignored',
-          `已识别 ${obstacleGateSummary.total} 个柱/树候选但全部忽略、未确认任何扣除区，量单未做障碍扣减，请业务确认现场确实无需扣除。`,
-          { obstacleSummary: obstacleGateSummary }
-        ));
-      }
-
       buildProjectWarnings().forEach((entry) => {
         if (entry.severity === 'critical' && !errors.some(err => err.code === entry.code)) {
           errors.push(entry);
@@ -2480,17 +2432,9 @@
       const validation = validateProjectForDelivery();
       els.deliveryGatePanel.classList.toggle('ready', validation.ready);
       els.deliveryGatePanel.classList.toggle('blocked', !validation.ready);
-      const obs = obstacleDetectionSummary();
-      const obstacleLine = obs.total > 0
-        ? `<span>柱/树候选：已识别 ${obs.total} · 已确认 ${obs.confirmed} · 已忽略 ${obs.ignored} · 待确认 ${obs.pending}</span>`
-        : '';
-      const warnLine = validation.warnings.length
-        ? `<span style="color:#9a6700;font-weight:700;">注意：${escapeHtml(validation.warnings.map(item => item.message).join('；'))}</span>`
-        : '';
-      els.deliveryGatePanel.innerHTML = (validation.ready
+      els.deliveryGatePanel.innerHTML = validation.ready
         ? '<strong>交付门禁通过</strong><span>正式 CSV、裁切 SVG、打印/PDF 和宿主报价数据可使用。</span>'
-        : `<strong>交付门禁阻断</strong><span>${escapeHtml(validation.errors.slice(0, 3).map(item => item.message).join('；'))}${validation.errors.length > 3 ? '；...' : ''}</span>`)
-        + obstacleLine + warnLine;
+        : `<strong>交付门禁阻断</strong><span>${escapeHtml(validation.errors.slice(0, 3).map(item => item.message).join('；'))}${validation.errors.length > 3 ? '；...' : ''}</span>`;
       [els.exportCsvBtn, els.exportSvgBtn, els.printReportBtn].forEach((button) => {
         if (!button) return;
         button.disabled = !validation.ready;
@@ -2633,8 +2577,6 @@
 
     function emitHostChange(reason) {
       clearPrintReport();
-      // 任何会通知宿主的状态变更，同时刷新本地交付门禁面板，保证按钮禁用态/提示与状态一致。
-      updateDeliveryGatePanel();
       if (!bridgeReadySent) return;
       emitHostMessage('gantang-grid-designer:change', {
         reason,
@@ -3302,49 +3244,22 @@
       return id;
     }
 
-    function polygonsIntersect(a, b) {
-      if (!Array.isArray(a) || !Array.isArray(b) || a.length < 3 || b.length < 3) return false;
-      if (a.some(p => pointInPolygon(p, b))) return true;
-      if (b.some(p => pointInPolygon(p, a))) return true;
-      for (let i = 0; i < a.length; i++) {
-        const a1 = a[i];
-        const a2 = a[(i + 1) % a.length];
-        for (let j = 0; j < b.length; j++) {
-          const b1 = b[j];
-          const b2 = b[(j + 1) % b.length];
-          if (segmentsIntersect(a1, a2, b1, b2)) return true;
-        }
-      }
-      return false;
-    }
-
     function candidateInsideClosedTiling(candidate) {
-      const points = Array.isArray(candidate.points) ? candidate.points : [];
-      const center = candidate.center || polygonCenter(points);
+      const center = candidate.center || polygonCenter(candidate.points);
       if (!center) return false;
       const tilingPolygons = state.regions
         .filter(region => region.type === 'tiling' && region.closed !== false && region.points.length >= 3)
         .map(region => region.points);
-      if (!tilingPolygons.length) return false;
-      if (!pointInAnyPolygon(center, tilingPolygons)) return false;
-      // 不止验中心点：要求候选多边形绝大部分顶点也落在铺装区内，拒绝大幅越界的候选。
-      if (points.length >= 3) {
-        const insideCount = points.filter(p => pointInAnyPolygon(p, tilingPolygons)).length;
-        if (insideCount / points.length < 0.8) return false;
-      }
-      return true;
+      return pointInAnyPolygon(center, tilingPolygons);
     }
 
     function candidateOverlapsExistingHole(candidate) {
-      const points = Array.isArray(candidate.points) ? candidate.points : [];
-      const center = candidate.center || polygonCenter(points);
+      const center = candidate.center || polygonCenter(candidate.points);
       if (!center) return false;
       const radius = Math.max(candidate.radiusPx || 0, 10);
       return state.regions
         .filter(region => region.type === 'hole' && region.points.length >= 3)
         .some((region) => {
-          // 多边形实际相交判断，而不是仅比中心距。
-          if (points.length >= 3 && polygonsIntersect(points, region.points)) return true;
           const holeCenter = polygonCenter(region.points);
           return holeCenter && Math.hypot(center.x - holeCenter.x, center.y - holeCenter.y) < radius * 0.75;
         });
@@ -3399,7 +3314,6 @@
       if (state.obstacleDetection.runs.length > 20) {
         trimObstacleDetectionRuns();
       }
-      trimIgnoredObstacleCandidates();
 
       saveHistory();
       syncObstacleControls();
@@ -3420,17 +3334,7 @@
       const bbox = boundingBoxForRegions(tilingRegions);
       if (!bbox) return [];
 
-      let imageData;
-      try {
-        imageData = offscreenCtx.getImageData(0, 0, image.naturalWidth, image.naturalHeight);
-      } catch (err) {
-        return {
-          ok: false,
-          reason: 'image_read_blocked',
-          message: '底图跨域受限，浏览器禁止读取像素，无法做柱/树识别。请改用本地导入或带 CORS 头的底图。',
-          details: { error: String(err && err.message || err) }
-        };
-      }
+      const imageData = offscreenCtx.getImageData(0, 0, image.naturalWidth, image.naturalHeight);
       const data = imageData.data;
       const medianGray = estimateMedianGray(data);
       const sampleStep = image.naturalWidth * image.naturalHeight > 7000000 ? 3 : 2;
@@ -3824,13 +3728,7 @@
 
       const width = x1 - x0 + 1;
       const height = y1 - y0 + 1;
-      let imgData;
-      try {
-        imgData = offscreenCtx.getImageData(x0, y0, width, height);
-      } catch (err) {
-        // 跨域底图读取被禁时，吸附降级为无像素，不影响框选交互。
-        return { pixels, medianGray: 255, darkCadBackground: false };
-      }
+      const imgData = offscreenCtx.getImageData(x0, y0, width, height);
       const data = imgData.data;
       const medianGray = estimateMedianGray(data);
       const darkCadBackground = medianGray < 92;
@@ -5972,13 +5870,8 @@
     function printReport() {
       if (!assertDeliveryReady('打印 / PDF')) return;
       // 1. Convert plan and grid canvases to images for print preview
-      try {
-        document.getElementById('printImgPlan').src = els.planCanvas.toDataURL('image/png');
-        document.getElementById('printImgGrid').src = els.gridCanvas.toDataURL('image/png');
-      } catch (err) {
-        alert('底图跨域受限，浏览器禁止导出画布图像，无法生成打印预览。请改用本地导入或带 CORS 头的底图。');
-        return;
-      }
+      document.getElementById('printImgPlan').src = els.planCanvas.toDataURL('image/png');
+      document.getElementById('printImgGrid').src = els.gridCanvas.toDataURL('image/png');
 
       // 2. Populate tables
       const coveredArea = generatedCells.reduce((sum, c) => sum + c.area_m2, 0);

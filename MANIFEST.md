@@ -162,12 +162,40 @@
   - 真实 iPad/Safari 触摸操作仍未验证。
   - 真实宿主生产 BOM/报价系统仍未接入。
 
+## 2026-06-17 批次一 P0/P1 修复（Claude 实施，待复核）
+
+- 新版本标记：`v20260617-batch1` / `manifest.version=1.1.3-batch1-p0-p1`
+- 回退备份：
+  - `_backup/gantang-grid-designer-v20260617-before-batch1-p0-p1.html`
+- 修改文件：
+  - `gantang-grid-designer/gantang-grid-designer.html`
+  - `gantang-grid-designer/manifest.json`
+  - `gantang-grid-designer/gantang-grid-designer-integration.md`
+  - `package.json`（新增）、`scripts/check-inline.js`（新增）
+  - `MANIFEST.md`
+- 修改内容：
+  - **P0-1**：`DEBUG_MODE` 删除 `pathname.includes('irregular-field-debug')` 触发，仅认 `?debug=1|true`；交付目录名不再强制开启调试，恢复非 debug 路径对实时 JSON 与内置测试图纸的隐藏。
+  - **P0-2**：`validateProjectForDelivery()` 新增**非阻断** warning `obstacle_candidates_all_ignored`，仅当本项目扫描过（`runs` 非空）且 `confirmed===0` 且 `ignored>0` 时触发；交付门禁面板新增"已识别/已确认/已忽略/待确认"计数与 warning 展示。从未扫描的项目不报此 warning。
+  - **P0-3**：新增 `package.json` 与零依赖 `scripts/check-inline.js`，`npm test` 可在本包内校验所有内联脚本语法 + `manifest.json` 解析；同步修订 integration.md 验收/预处理段，标注 `package:grid-designer`/`prepare:plan-import` 属主仓库环境。
+  - **P1-1**：候选→扣除区校验从 center-only 升级——`candidateInsideClosedTiling` 要求候选多边形 ≥80% 顶点落在铺装区内；`candidateOverlapsExistingHole` 改用多边形实际相交（新增 `polygonsIntersect`），中心距仅作退化兜底。
+  - **P1-2**：新增 `trimIgnoredObstacleCandidates()`（`MAX_IGNORED_OBSTACLE_CANDIDATES=200`），每次扫描后裁剪 ignored 候选，防止反复扫描后无限堆积。
+  - **P1-3**：新增 `#printFallbackNotice`，未通过"打印 / PDF"按钮直接 Ctrl+P 时打印提示页而非空白页。
+  - **P1-5**：`image.crossOrigin='anonymous'`；`detectObstacleCandidates`/`sampleDraftingPixels`/`printReport` 的 `getImageData`/`toDataURL` 加 try/catch，跨域受限时返回结构化失败（`image_read_blocked`）或友好提示，不抛未捕获异常。
+  - **P1-6**：`emitHostChange()` 统一调用 `updateDeliveryGatePanel()`，任何通知宿主的状态变更都同步刷新本地门禁面板。
+- 验证命令与结果：
+  - `npm test`（`node scripts/check-inline.js`）：内联脚本语法 + manifest 解析全部通过。
+  - 待复核：交付门禁/候选/扣洞/导出/undo/print/iframe host 的人工模拟回归（见 `REVIEW-CHECKLIST.md` G1–G8 与 T1–T10）。
+- 未验证边界：
+  - 本批次为 Claude 实施、尚未经只读 reviewer 终审。
+  - 真实 iPad/Safari 触摸操作仍未验证；真实宿主生产 BOM/报价系统仍未接入。
+  - DWG/DXF/PDF 浏览器内导入为批次二，本批次未包含。
+
 ## SHA-256
 
 ```text
 42f561d59180d6e333d2659aa3ed6e75fd03a97a01f4c29ca354d185dc1f6f7b  ./README.md
-a04dceb44dd5f08eb8e6ca2111207188fe9a17cbcee588e39bd4b7f27735937d  ./gantang-grid-designer/gantang-grid-designer-integration.md
-63e05d48307cdc8ee7f7cc1e7114d1abda8d09e7aaca0841c3fa23ab98bfffc4  ./gantang-grid-designer/gantang-grid-designer.html
+2c3dff1c92da22afa14ec9fdd30cb6e98f2eb1ec3fe73878e06ffbcb9d6340b5  ./gantang-grid-designer/gantang-grid-designer-integration.md
+0ecaf8885adb166b2c3ba859f1bd9367b4b45902d86f1ca0a122ef664c50251f  ./gantang-grid-designer/gantang-grid-designer.html
 1d2ab502040cf7ae86348b0aeeb6cd6f3b30b4d49950e14f6b2592d5bc84e6e8  ./gantang-grid-designer/gantang-page08-plan.png
 5cfc1a057c26f59ab191821787ff5e01848b73cc40e954e2b061a04dfa4bb86f  ./gantang-grid-designer/history-drawings/history-001-cad-screenshot-06.png
 636ff6b93119137ed414c4d28c708cecc7dd449c2a857f36b2eb6f4a00b56f50  ./gantang-grid-designer/history-drawings/history-002-school-l-plan.svg
@@ -175,9 +203,11 @@ a04dceb44dd5f08eb8e6ca2111207188fe9a17cbcee588e39bd4b7f27735937d  ./gantang-grid
 6d5c36baf1a7e8ecb914cc98e2b2b31578c33c51f2c17438aaebd54b6cf19d60  ./gantang-grid-designer/history-drawings/history-004-narrow-angled-plan.svg
 5cfc1a057c26f59ab191821787ff5e01848b73cc40e954e2b061a04dfa4bb86f  ./gantang-grid-designer/import-batch/cad-screenshot-06.png
 b4a8fc495f55767c9a9d28f4b15fb337e235975ea26f9cebda330a6d44dfc6ba  ./gantang-grid-designer/integration-host-demo.html
-15cae6490e067103e4f1d1a68492d9a3e0f5ecc862c0b413e02675aba020efda  ./gantang-grid-designer/manifest.json
+ad9d4013130315c2a97f18c67d0eaeda021e00cf8f2f0078606528900a41dabb  ./gantang-grid-designer/manifest.json
 8d357e63a161d0f613e4b2994f7a50291f69672ba00df1166896584731c62c5a  ./gantang-grid-designer/smoke-dim-labels-after-fix.png
 852649512ca544ab9baeeda2d2305f87368ff2484096df20fcd63e5898256cca  ./index.html
+712f370cc9796acfb494b641a8817f104627b41cb0243b59469c15f8384ff3e7  ./package.json
+ca441674f369bc2fd6b8503e4274b2111e3155da6d21b1af80c859d113b1648b  ./scripts/check-inline.js
 ```
 
 ## 本地预览
