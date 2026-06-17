@@ -1316,6 +1316,7 @@
           <button onclick="exportCSV()" id="exportCsvBtn" class="success">导出 CSV</button>
           <button onclick="exportCutSVG()" id="exportSvgBtn" class="success">导出裁切 SVG</button>
           <button onclick="printReport()" id="printReportBtn" class="primary">打印 / PDF</button>
+          <button onclick="downloadReportPDF()" id="downloadPdfBtn" class="primary">下载 PDF</button>
         </div>
       </div>
     </header>
@@ -1734,6 +1735,9 @@
     <p>直接使用浏览器的打印（Ctrl/Cmd + P）不会输出报表内容，这是为了避免打印到过期或未通过交付门禁的数据。</p>
   </div>
 
+  <!-- 本地 vendor 库（离线，不走 CDN）：jsPDF MIT -->
+  <script src="vendor/jspdf.umd.min.js"></script>
+
   <!-- JavaScript App Code -->
   <script>
     const urlParams = new URLSearchParams(window.location.search);
@@ -2045,6 +2049,7 @@
       exportCsvBtn: document.getElementById('exportCsvBtn'),
       exportSvgBtn: document.getElementById('exportSvgBtn'),
       printReportBtn: document.getElementById('printReportBtn'),
+      downloadPdfBtn: document.getElementById('downloadPdfBtn'),
       debugJsonPanel: document.getElementById('debugJsonPanel'),
       drawingHistoryBtn: document.getElementById('drawingHistoryBtn'),
       magnifier: document.getElementById('magnifier'),
@@ -2562,7 +2567,7 @@
         ? '<strong>交付门禁通过</strong><span>正式 CSV、裁切 SVG、打印/PDF 和宿主报价数据可使用。</span>'
         : `<strong>交付门禁阻断</strong><span>${escapeHtml(validation.errors.slice(0, 3).map(item => item.message).join('；'))}${validation.errors.length > 3 ? '；...' : ''}</span>`)
         + obstacleLine + warnLine;
-      [els.exportCsvBtn, els.exportSvgBtn, els.printReportBtn].forEach((button) => {
+      [els.exportCsvBtn, els.exportSvgBtn, els.printReportBtn, els.downloadPdfBtn].forEach((button) => {
         if (!button) return;
         button.disabled = !validation.ready;
         button.title = validation.ready ? '' : '需先通过交付门禁';
@@ -6328,6 +6333,63 @@
       // 3. Trigger print dialog
       document.getElementById('printReport').dataset.printReady = 'true';
       window.print();
+    }
+
+    // 一键导出 PDF（vendor jsPDF，离线）。门禁不过时按钮已禁用，这里再次兜底。
+    function downloadReportPDF() {
+      if (!assertDeliveryReady('下载 PDF')) return;
+      const jsPDFCtor = window.jspdf && window.jspdf.jsPDF;
+      if (!jsPDFCtor) { alert('PDF 组件未加载（vendor/jspdf.umd.min.js）。'); return; }
+      let planImg, gridImg;
+      try {
+        planImg = els.planCanvas.toDataURL('image/png');
+        gridImg = els.gridCanvas.toDataURL('image/png');
+      } catch (err) {
+        alert('底图跨域受限，浏览器禁止导出画布图像，无法生成 PDF。请改用本地导入或带 CORS 头的底图。');
+        return;
+      }
+      const coveredArea = generatedCells.reduce((sum, c) => sum + c.area_m2, 0);
+      const totalTileArea = generatedCells.length * state.tileSize * state.tileSize;
+      const wasteArea = totalTileArea - coveredArea;
+      const wastePct = (wasteArea / Math.max(1e-9, totalTileArea)) * 100;
+      const fullCount = generatedCells.filter(c => c.status === 'full').length;
+      const cutCount = generatedCells.filter(c => c.status === 'cut').length;
+
+      const doc = new jsPDFCtor({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+      const pageW = doc.internal.pageSize.getWidth();
+      const margin = 36;
+      let y = margin;
+      doc.setFontSize(16);
+      doc.text('Gantang Floating Floor Layout Report', margin, y); y += 22;
+      doc.setFontSize(10);
+      doc.text(`Generated: ${new Date().toLocaleString()}`, margin, y); y += 14;
+      doc.text(`Image: ${currentImagePath}`, margin, y); y += 14;
+      doc.text(`Scale: ${state.scale.metersPerPixel.toFixed(6)} m/px   Tile: ${state.tileSize.toFixed(2)} m`, margin, y); y += 18;
+
+      const lines = [
+        `Net covered area: ${coveredArea.toFixed(3)} m2`,
+        `Total tile area: ${totalTileArea.toFixed(3)} m2`,
+        `Full tiles: ${fullCount}    Cut tiles: ${cutCount}    Total: ${generatedCells.length}`,
+        `Waste area: ${wasteArea.toFixed(3)} m2   Waste rate: ${wastePct.toFixed(1)} %`
+      ];
+      lines.forEach((ln) => { doc.text(ln, margin, y); y += 14; });
+      y += 6;
+
+      const imgW = pageW - margin * 2;
+      const placeImg = (dataUrl, label) => {
+        if (!dataUrl) return;
+        try {
+          const props = doc.getImageProperties(dataUrl);
+          const h = Math.min(320, imgW * props.height / props.width);
+          if (y + h + 16 > doc.internal.pageSize.getHeight() - margin) { doc.addPage(); y = margin; }
+          doc.setFontSize(11); doc.text(label, margin, y); y += 12;
+          doc.addImage(dataUrl, 'PNG', margin, y, imgW, h); y += h + 16;
+        } catch (err) {}
+      };
+      placeImg(planImg, 'Plan & selections');
+      placeImg(gridImg, 'Tile layout');
+
+      doc.save(`gantang-report-${new Date().toISOString().slice(0,10)}.pdf`);
     }
 
     // Sutherland-Hodgman Polygon Clipping (JS)
