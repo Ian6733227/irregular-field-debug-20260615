@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>悬浮地板设计器宿主集成示例</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #172033;
+      background: #eef3f8;
+    }
+    .shell {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 380px;
+      height: 100vh;
+      min-height: 620px;
+    }
+    iframe {
+      width: 100%;
+      height: 100%;
+      border: 0;
+      background: #fff;
+    }
+    aside {
+      border-left: 1px solid #cbd5e1;
+      background: #f8fafc;
+      padding: 16px;
+      overflow: auto;
+    }
+    h1 {
+      margin: 0 0 12px;
+      font-size: 18px;
+      line-height: 1.3;
+    }
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    button {
+      height: 36px;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      background: #fff;
+      color: #172033;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button.primary {
+      border-color: #0b78bf;
+      background: #0b78bf;
+      color: #fff;
+    }
+    pre {
+      min-height: 360px;
+      margin: 0;
+      padding: 12px;
+      border: 1px solid #d7e0ea;
+      border-radius: 8px;
+      background: #0f172a;
+      color: #dbeafe;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .status {
+      margin: 0 0 10px;
+      color: #526175;
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <iframe id="designer" title="悬浮地板设计器"></iframe>
+    <aside>
+      <h1>宿主程序集成示例</h1>
+      <p class="status" id="status">等待设计器 ready...</p>
+      <div class="actions">
+        <button class="primary" id="getProjectBtn">获取正式项目</button>
+        <button id="getDraftBtn">获取草稿项目</button>
+        <button id="getSummaryBtn">获取摘要</button>
+        <button id="setScaleBtn">设置比例尺</button>
+        <button id="setRegionModeBtn">区域模式</button>
+        <button id="setPanModeBtn">移动模式</button>
+      </div>
+      <pre id="output">{}</pre>
+    </aside>
+  </div>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const packagedDefault = './gantang-grid-designer.html?image=import-batch/cad-screenshot-06.png';
+    const sourceDefault = '../out/manual-selection/gantang-grid-designer.html?image=import-batch/cad-screenshot-06.png';
+    const defaultDesigner = window.location.pathname.includes('/examples/') ? sourceDefault : packagedDefault;
+    const designer = document.getElementById('designer');
+    const statusEl = document.getElementById('status');
+    const outputEl = document.getElementById('output');
+
+    function withParentOrigin(src) {
+      try {
+        const url = new URL(src, window.location.href);
+        if (window.location.origin !== 'null' && url.protocol !== 'file:' && !url.searchParams.has('parentOrigin')) {
+          url.searchParams.set('parentOrigin', window.location.origin);
+        }
+        return url.href;
+      } catch (err) {
+        return src;
+      }
+    }
+
+    designer.src = withParentOrigin(params.get('designer') || defaultDesigner);
+
+    function designerTargetOrigin() {
+      try {
+        const url = new URL(designer.src, window.location.href);
+        if (url.protocol === 'file:') return '*';
+        return url.origin;
+      } catch (err) {
+        return window.location.origin === 'null' ? '*' : window.location.origin;
+      }
+    }
+
+    function isTrustedDesignerMessage(event) {
+      const expected = designerTargetOrigin();
+      if (expected === '*') return true;
+      return event.origin === expected;
+    }
+
+    function request(type, payload = {}) {
+      const requestId = String(Date.now()) + '-' + Math.random().toString(16).slice(2);
+      designer.contentWindow.postMessage({
+        source: 'gantang-grid-host',
+        type,
+        requestId,
+        payload
+      }, designerTargetOrigin());
+      return requestId;
+    }
+
+    function show(value) {
+      outputEl.textContent = JSON.stringify(value, null, 2);
+    }
+
+    window.addEventListener('message', (event) => {
+      if (!isTrustedDesignerMessage(event)) return;
+      const data = event.data || {};
+      if (data.source !== 'gantang-grid-designer') return;
+      if (data.type === 'gantang-grid-designer:ready') {
+        statusEl.textContent = '设计器已连接：' + data.version;
+        show(data.payload);
+      } else if (data.type === 'gantang-grid-designer:change') {
+        statusEl.textContent = '设计器有更新：' + data.payload.reason;
+      } else if (data.type === 'gantang-grid-designer:error') {
+        statusEl.textContent = '设计器错误：' + data.payload.message;
+        show(data.payload);
+      } else {
+        show(data.payload);
+      }
+    });
+
+    document.getElementById('getProjectBtn').addEventListener('click', () => {
+      request('gantang-grid-designer:get-project');
+    });
+
+    document.getElementById('getDraftBtn').addEventListener('click', () => {
+      request('gantang-grid-designer:get-project', { allowDraft: true });
+    });
+
+    document.getElementById('getSummaryBtn').addEventListener('click', () => {
+      request('gantang-grid-designer:export-summary');
+    });
+
+    document.getElementById('setScaleBtn').addEventListener('click', () => {
+      request('gantang-grid-designer:set-scale', {
+        metersPerPixel: 0.02468381,
+        source: 'host-demo-confirmed-scale',
+        lengthM: 9.7,
+        points: [{ x: 390, y: 1466 }, { x: 783, y: 1466 }]
+      });
+    });
+
+    document.getElementById('setRegionModeBtn').addEventListener('click', () => {
+      request('gantang-grid-designer:set-mode', { mode: 'region' });
+    });
+
+    document.getElementById('setPanModeBtn').addEventListener('click', () => {
+      request('gantang-grid-designer:set-mode', { mode: 'pan' });
+    });
+  </script>
+</body>
+</html>

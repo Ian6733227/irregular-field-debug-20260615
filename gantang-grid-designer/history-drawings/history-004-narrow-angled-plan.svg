@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="900" viewBox="0 0 1400 900">
+  <rect width="1400" height="900" fill="#111827"/>
+  <g stroke="#374151" stroke-width="1" opacity="0.65">
+    <path d="M80 120H1320M80 240H1320M80 360H1320M80 480H1320M80 600H1320M80 720H1320"/>
+    <path d="M120 80V820M320 80V820M520 80V820M720 80V820M920 80V820M1120 80V820M1280 80V820"/>
+  </g>
+  <g fill="#1f2937" stroke="#16a34a" stroke-width="2">
+    <path d="M120 420L360 170L1180 130L1260 300L980 360L1140 720L320 780Z"/>
+  </g>
+  <g stroke="#ef4444" stroke-width="2" fill="none">
+    <path d="M145 420L375 190L1160 155L1230 295L950 345L1110 695L335 755Z"/>
+    <path d="M620 350L790 450L600 545Z"/>
+  </g>
+  <g stroke="#06b6d4" stroke-width="3" fill="none">
+    <path d="M120 420L360 170L1180 130L1260 300L980 360L1140 720L320 780Z"/>
+  </g>
+  <g stroke="#facc15" stroke-width="2" fill="none">
+    <path d="M120 820H520"/>
+    <path d="M120 805V835M520 805V835"/>
+  </g>
+  <g fill="#d1d5db" font-family="Arial, sans-serif" font-size="18">
+    <text x="585" y="105">TEST 004 ANGLED CORRIDOR</text>
+    <text x="265" y="812">26.00m ruler</text>
+    <text x="630" y="455">triangle hole</text>
+  </g>
+</svg>

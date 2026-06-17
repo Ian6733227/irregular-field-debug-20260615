@@ -1,0 +1,34 @@
+{
+  "name": "gantang-grid-designer-integration",
+  "version": "1.1.2-state-integrity",
+  "featureVersion": "v20260616-1508",
+  "bridgeVersion": "gantang-grid-designer.bridge.v1",
+  "entry": "gantang-grid-designer.html",
+  "hostDemo": "integration-host-demo.html",
+  "docs": "gantang-grid-designer-integration.md",
+  "supportedDirectInputs": [
+    "png",
+    "jpg",
+    "jpeg",
+    "webp",
+    "svg"
+  ],
+  "preprocessInputs": [
+    "pdf",
+    "doc",
+    "docx",
+    "dwg",
+    "dxf"
+  ],
+  "outputSchema": "gantang-project.v1",
+  "obstacleDetectionSchema": "gantang-obstacle-detection.v1",
+  "copiedFiles": [
+    "gantang-grid-designer.html",
+    "integration-host-demo.html",
+    "gantang-grid-designer-integration.md",
+    "gantang-page08-plan.png",
+    "import-batch/cad-screenshot-06.png",
+    "smoke-dim-labels-after-fix.png"
+  ],
+  "generatedAt": "2026-06-11T11:44:47.186Z"
+}

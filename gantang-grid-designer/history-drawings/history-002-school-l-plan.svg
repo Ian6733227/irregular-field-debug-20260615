@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="900" viewBox="0 0 1400 900">
+  <rect width="1400" height="900" fill="#202833"/>
+  <g stroke="#1f7a3a" stroke-width="1" fill="none" opacity="0.8">
+    <path d="M150 170H980V300H1170V700H850V790H420V700H150Z"/>
+    <path d="M120 120H1220V835H120Z" stroke-dasharray="9 7"/>
+    <path d="M150 820H550"/>
+    <path d="M150 805V835M550 805V835"/>
+  </g>
+  <g stroke="#d32222" stroke-width="2" fill="none" opacity="0.9">
+    <path d="M140 155H990V285H1188V717H835V805H405V715H132Z"/>
+    <path d="M540 310H700V460H540Z"/>
+  </g>
+  <g stroke="#00e5ff" stroke-width="3" fill="none">
+    <path d="M150 170H980V300H1170V700H850V790H420V700H150Z"/>
+  </g>
+  <g stroke="#facc15" stroke-width="1.4" fill="none" opacity="0.9">
+    <path d="M165 185H965V315H1155V685H835V775H435V685H165Z"/>
+    <path d="M560 330H680V440H560Z"/>
+  </g>
+  <g fill="#6ee7b7" font-family="Arial, sans-serif" font-size="18">
+    <text x="710" y="145">TEST 002 L-SHAPE SITE</text>
+    <text x="275" y="812">20.00m ruler</text>
+    <text x="990" y="245">notch</text>
+    <text x="575" y="388">hole</text>
+  </g>
+  <g stroke="#3b82f6" stroke-width="1" fill="none" opacity="0.45">
+    <path d="M150 170V820M550 170V820M980 170V820M1170 170V820"/>
+    <path d="M100 170H1250M100 300H1250M100 700H1250M100 790H1250"/>
+  </g>
+</svg>

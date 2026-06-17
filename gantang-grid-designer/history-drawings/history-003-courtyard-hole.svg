@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="900" viewBox="0 0 1400 900">
+  <rect width="1400" height="900" fill="#f8fafc"/>
+  <rect x="70" y="70" width="1260" height="760" fill="#eef2f7" stroke="#cbd5e1" stroke-width="2"/>
+  <g stroke="#94a3b8" stroke-width="1" opacity="0.55">
+    <path d="M120 120H1260M120 220H1260M120 320H1260M120 420H1260M120 520H1260M120 620H1260M120 720H1260"/>
+    <path d="M170 100V800M370 100V800M570 100V800M770 100V800M970 100V800M1170 100V800"/>
+  </g>
+  <g stroke="#22c55e" stroke-width="2" fill="none">
+    <path d="M170 140H1170V760H990V320H770V760H170Z"/>
+    <path d="M440 330H650V570H440Z"/>
+  </g>
+  <g stroke="#ef4444" stroke-width="2" fill="none">
+    <path d="M190 160H1150V740H1010V300H750V740H190Z"/>
+    <path d="M460 350H630V550H460Z"/>
+  </g>
+  <g stroke="#0ea5e9" stroke-width="3" fill="none" stroke-dasharray="10 8">
+    <path d="M170 140H1170V760H990V320H770V760H170Z"/>
+  </g>
+  <g stroke="#f59e0b" stroke-width="2" fill="none">
+    <path d="M150 820H550"/>
+    <path d="M150 805V835M550 805V835"/>
+  </g>
+  <g fill="#334155" font-family="Arial, sans-serif" font-size="18">
+    <text x="650" y="110">TEST 003 COURTYARD SITE</text>
+    <text x="275" y="812">18.40m ruler</text>
+    <text x="490" y="460">courtyard</text>
+  </g>
+</svg>

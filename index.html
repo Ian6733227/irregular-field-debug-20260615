@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>异形场地模块独立调试</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #172033;
+      --muted: #657084;
+      --line: #d7dde7;
+      --surface: #ffffff;
+      --panel: #f6f8fb;
+      --bg: #e6ebf2;
+      --blue: #0b78bf;
+      --green: #188253;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", "Microsoft YaHei", Arial, sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      min-height: 62px;
+      padding: 10px 18px;
+      background: rgba(255, 255, 255, 0.96);
+      border-bottom: 1px solid var(--line);
+    }
+    h1 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+    .badge {
+      border: 1px solid #c8e3f2;
+      border-radius: 4px;
+      padding: 3px 8px;
+      color: #075a91;
+      background: #e7f4fb;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    main {
+      width: min(960px, calc(100vw - 28px));
+      margin: 22px auto;
+      display: grid;
+      gap: 12px;
+    }
+    section {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+    }
+    h2 {
+      margin: 0 0 8px;
+      font-size: 15px;
+    }
+    p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.6;
+      font-size: 14px;
+    }
+    .actions {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+    a.button {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 44px;
+      border-radius: 7px;
+      border: 1px solid var(--blue);
+      background: var(--blue);
+      color: #fff;
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 800;
+    }
+    a.button.secondary {
+      background: #fff;
+      color: var(--blue);
+    }
+    code {
+      display: inline-block;
+      padding: 2px 5px;
+      border-radius: 4px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      color: #334155;
+      font-size: 12px;
+    }
+    ul {
+      margin: 10px 0 0;
+      padding-left: 18px;
+      color: var(--muted);
+      line-height: 1.65;
+      font-size: 14px;
+    }
+    @media (max-width: 700px) {
+      header {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+      .actions {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>异形场地模块独立调试</h1>
+    <span class="badge">gantang-project.v1</span>
+  </header>
+  <main>
+    <section>
+      <h2>入口</h2>
+      <p>这个目录是从主球场设计器里单独复制出来的异形场地模块，包含扣除区域、比例标定、铺格算量、JSON/CSV 导出和 iframe 通信 demo。</p>
+      <div class="actions">
+        <a class="button" href="gantang-grid-designer/gantang-grid-designer.html?image=import-batch/cad-screenshot-06.png">打开独立设计器</a>
+        <a class="button secondary" href="gantang-grid-designer/integration-host-demo.html">打开宿主 Demo</a>
+      </div>
+    </section>
+    <section>
+      <h2>调试重点</h2>
+      <ul>
+        <li>铺装区域和扣除区域是否闭合、是否正确参与净面积与格子计算。</li>
+        <li>比例尺是否从待校准变为已校准，导出 JSON 中 <code>scale.needsCalibration</code> 是否为 <code>false</code>。</li>
+        <li>导出 JSON / CSV 是否真实触发下载，并包含 <code>gantang-project.v1</code> 与算量字段。</li>
+        <li>宿主 Demo 的 <code>get-project</code>、<code>set-scale</code>、<code>set-mode</code> 消息是否正常返回。</li>
+      </ul>
+    </section>
+  </main>
+</body>
+</html>
