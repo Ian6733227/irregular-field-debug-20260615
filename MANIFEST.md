@@ -225,6 +225,12 @@
 - 验证：`npm test` 通过；Chrome 预览实测（console error=0）：XSS 不触发、贴边洞/共边洞/真实重叠/越界绕过、单位切换、报价 round-trip、候选确认回归全部符合预期。
 - 未验证边界：识别召回/精确率仍需真实带标注样本；真实 iPad/Safari、真实宿主 BOM/报价未接入；本批仍为 Claude 实施+自测+一轮独立 reviewer，建议正式发布前再过一次人评。
 
+## 2026-06-17 DWG 导入引导（v20260617-batch2-rev2 / 1.2.2-dwg-guidance）
+
+- 真实样本验证：客户提供的 10 个文件均为真二进制 DWG（AC1015 / AutoCAD 2000），内置只支持 DXF/PDF，DWG 需先转换。
+- 据此改为引导式提示：用户选择 `.dwg` 时（`accept` 已加入 `.dwg`，否则被文件框过滤掉看不到提示）弹出明确指引——"请先转成 **DXF 或 PDF** 再导入"，并给 DWG→DXF（DWG TrueView / ODA File Converter，免费）与 DWG→PDF（CAD 打印/输出 PDF）两条路径。DWG 不会被误当底图。
+- 仅改 `gantang-grid-designer.html`（提示文案 + accept），浏览器实测：`.dwg` 可选、提示含 DXF 与 PDF、不被导入；`npm test` 通过、console error=0。
+
 ## SHA-256
 
 ```text
@@ -232,9 +238,9 @@
 712f370cc9796acfb494b641a8817f104627b41cb0243b59469c15f8384ff3e7  ./package.json
 ca441674f369bc2fd6b8503e4274b2111e3155da6d21b1af80c859d113b1648b  ./scripts/check-inline.js
 852649512ca544ab9baeeda2d2305f87368ff2484096df20fcd63e5898256cca  ./index.html
-13827942fec4560eefba41a7446a657df6b51a43833512cd077a103b6c33d414  ./gantang-grid-designer/gantang-grid-designer.html
+60eb3b10d9c69ff9e534e846756cc2f6313c6404739f898ab04c1bcbfb7be008  ./gantang-grid-designer/gantang-grid-designer.html
 2c3dff1c92da22afa14ec9fdd30cb6e98f2eb1ec3fe73878e06ffbcb9d6340b5  ./gantang-grid-designer/gantang-grid-designer-integration.md
-e58bbbdefd856e35b915f7598047854af7d7611912dc14aba3611bf2a024da4b  ./gantang-grid-designer/manifest.json
+2602034b4cb3757df3c56117dbcdaea1a02c1d89f5505b614b6281e42af20aa4  ./gantang-grid-designer/manifest.json
 b4a8fc495f55767c9a9d28f4b15fb337e235975ea26f9cebda330a6d44dfc6ba  ./gantang-grid-designer/integration-host-demo.html
 1d2ab502040cf7ae86348b0aeeb6cd6f3b30b4d49950e14f6b2592d5bc84e6e8  ./gantang-grid-designer/gantang-page08-plan.png
 5cfc1a057c26f59ab191821787ff5e01848b73cc40e954e2b061a04dfa4bb86f  ./gantang-grid-designer/import-batch/cad-screenshot-06.png

@@ -1311,7 +1311,7 @@
           <button onclick="deleteCurrentProject()" title="删除当前项目">删除</button>
         </div>
         <input type="file" id="fileInput" onchange="loadProject(event)" accept=".json">
-        <input type="file" id="drawingInput" onchange="importDrawing(event)" accept=".png,.jpg,.jpeg,.webp,.svg,.pdf,.dxf,image/png,image/jpeg,image/webp,image/svg+xml,application/pdf">
+        <input type="file" id="drawingInput" onchange="importDrawing(event)" accept=".png,.jpg,.jpeg,.webp,.svg,.pdf,.dxf,.dwg,image/png,image/jpeg,image/webp,image/svg+xml,application/pdf">
         <div class="action-group">
           <button onclick="exportCSV()" id="exportCsvBtn" class="success">导出 CSV</button>
           <button onclick="exportCutSVG()" id="exportSvgBtn" class="success">导出裁切 SVG</button>
@@ -6388,7 +6388,7 @@
     function showUnsupportedDrawingFormatNotice(fileName, ext) {
       const lowerExt = String(ext || '').toLowerCase();
       if (lowerExt === 'dwg') {
-        alert(`不能直接导入 ${fileName}。DWG 为私有格式：请先用 DWG TrueView 或 ODA File Converter（均免费）转成 DXF 再导入。本工具已支持直接导入 DXF / PDF / PNG / JPG / WEBP / SVG。`);
+        alert(`不能直接导入 ${fileName}。\nDWG 是 AutoCAD 私有格式，本工具不直接解析。请先转成 DXF 或 PDF 再导入：\n• DWG → DXF：用 DWG TrueView / ODA File Converter（均免费）。\n• DWG → PDF：在 CAD 里“打印/输出成 PDF”。\n本工具已支持直接导入：DXF / PDF / PNG / JPG / WEBP / SVG。`);
         return;
       }
       if (['doc', 'docx'].includes(lowerExt)) {
