@@ -190,24 +190,50 @@
   - 真实 iPad/Safari 触摸操作仍未验证；真实宿主生产 BOM/报价系统仍未接入。
   - DWG/DXF/PDF 浏览器内导入为批次二，本批次未包含。
 
+## 2026-06-17 批次二 功能扩展（Claude 实施，浏览器实测，待终审）
+
+- 新版本标记：`v20260617-batch2` / `manifest.version=1.2.0-batch2-features`
+- 修改文件：`gantang-grid-designer/gantang-grid-designer.html`、`manifest.json`、`package.json`、新增 `gantang-grid-designer/vendor/*`、`MANIFEST.md`
+- 新增本地 vendor 库（离线、不走 CDN）：`jspdf 2.5.1 (MIT)`、`pdf.js 3.11.174 (Apache-2.0)`、`dxf 5.3.1 (MIT)`
+- 实施内容（按用户列点 #11/#3/#1/#10/#7/#8/#5/#4/#6/#9）：
+  - #11 算量金标准对照：矩形 20×30m@0.25=9600 格/600㎡、对齐洞 −64 格/596㎡、非对齐洞面积守恒、`Σ byMaterial==total` 全部数值正确（验证项，无代码改动）。
+  - #3 扣除区几何门禁：`validateProjectForDelivery` 新增 `hole_outside_tiling` / `hole_overlap` critical（多边形相交，复用 `polygonsIntersect`）。
+  - #1 触摸端：canvas 改 Pointer Events（鼠标+触屏+笔），`touch-action:none`，长按删点，`pointercancel`/捕获释放；桌面回归不变。
+  - #10 比例尺增强：单位系统 m/cm/mm/in、已知面积反推（`mpp=√(area_m²/area_px)`）、多法一致性提示。
+  - #7 多项目管理：localStorage 项目列表 保存/切换/删除/新建，配额超限降级只存几何；复用 `exportProjectData`/`applyProjectData` round-trip。
+  - #8 一键 PDF：`downloadReportPDF`（vendor jsPDF），交付门禁禁用兜底，`toDataURL` 跨域兜底。
+  - #5 PDF/DXF 浏览器内导入：PDF.js 渲染、dxf `toSVG` 光栅化，统一走现有导入管线；最长边封顶 4000px；DXF 读 `insUnits` 预填比例（仅建议，保持未校准）；DWG 升级提示走外部转 DXF；worker 本地。
+  - #4 识别内核：模板匹配 NCC（`detectObstacleByTemplate`，含空心方框/圆圈，NMS 去重，工作量上限保护）+ 按置信度批量确认；合成 ground-truth 9/9 命中。
+  - #6 报价估算：`buildQuote`（`gantang-quote.v1`，按块/按㎡），进 `exportProjectData`/`exportProjectSummary` 供宿主消费。
+  - #9 多材料：分区多材料已存在（4 材料 chips + `byMaterial` + 报价/CSV/JSON 分组），端到端验证通过；拼花（单区内多材料图案）列为后续。
+- 验证：`npm test` 通过；Chrome 预览实测（每步 console error=0）：交付门禁/扣洞数值/候选/确认/导入/模板匹配/报价/多项目/触屏均通过；PDF 在可见标签页正常（后台标签页 rAF 挂起为环境现象，非代码缺陷）。
+- 未验证边界：
+  - 识别召回/精确率仍需真实带标注的室内多柱、室外多树样本抽检（本批为合成 ground-truth 验证）。
+  - 真实 iPad/Safari 触摸、真实宿主 BOM/报价系统仍未接入。
+  - 本批为 Claude 实施 + 自测，尚未经独立 reviewer 终审。
+
 ## SHA-256
 
 ```text
 42f561d59180d6e333d2659aa3ed6e75fd03a97a01f4c29ca354d185dc1f6f7b  ./README.md
+712f370cc9796acfb494b641a8817f104627b41cb0243b59469c15f8384ff3e7  ./package.json
+ca441674f369bc2fd6b8503e4274b2111e3155da6d21b1af80c859d113b1648b  ./scripts/check-inline.js
+852649512ca544ab9baeeda2d2305f87368ff2484096df20fcd63e5898256cca  ./index.html
+799b4013445dbfcce77e04de72d94d161ae06fa8d758e6d296ec1f5db8b6e193  ./gantang-grid-designer/gantang-grid-designer.html
 2c3dff1c92da22afa14ec9fdd30cb6e98f2eb1ec3fe73878e06ffbcb9d6340b5  ./gantang-grid-designer/gantang-grid-designer-integration.md
-0ecaf8885adb166b2c3ba859f1bd9367b4b45902d86f1ca0a122ef664c50251f  ./gantang-grid-designer/gantang-grid-designer.html
+5b20b953a7edc3ab4a840540269dc28bef8e1c7f09a0d6be08fe1bc0e0cd134b  ./gantang-grid-designer/manifest.json
+b4a8fc495f55767c9a9d28f4b15fb337e235975ea26f9cebda330a6d44dfc6ba  ./gantang-grid-designer/integration-host-demo.html
 1d2ab502040cf7ae86348b0aeeb6cd6f3b30b4d49950e14f6b2592d5bc84e6e8  ./gantang-grid-designer/gantang-page08-plan.png
+5cfc1a057c26f59ab191821787ff5e01848b73cc40e954e2b061a04dfa4bb86f  ./gantang-grid-designer/import-batch/cad-screenshot-06.png
+8d357e63a161d0f613e4b2994f7a50291f69672ba00df1166896584731c62c5a  ./gantang-grid-designer/smoke-dim-labels-after-fix.png
 5cfc1a057c26f59ab191821787ff5e01848b73cc40e954e2b061a04dfa4bb86f  ./gantang-grid-designer/history-drawings/history-001-cad-screenshot-06.png
 636ff6b93119137ed414c4d28c708cecc7dd449c2a857f36b2eb6f4a00b56f50  ./gantang-grid-designer/history-drawings/history-002-school-l-plan.svg
 162f135f1183707572f45e7482bee1845c086461591afb0ac7e6757cee9b60ca  ./gantang-grid-designer/history-drawings/history-003-courtyard-hole.svg
 6d5c36baf1a7e8ecb914cc98e2b2b31578c33c51f2c17438aaebd54b6cf19d60  ./gantang-grid-designer/history-drawings/history-004-narrow-angled-plan.svg
-5cfc1a057c26f59ab191821787ff5e01848b73cc40e954e2b061a04dfa4bb86f  ./gantang-grid-designer/import-batch/cad-screenshot-06.png
-b4a8fc495f55767c9a9d28f4b15fb337e235975ea26f9cebda330a6d44dfc6ba  ./gantang-grid-designer/integration-host-demo.html
-ad9d4013130315c2a97f18c67d0eaeda021e00cf8f2f0078606528900a41dabb  ./gantang-grid-designer/manifest.json
-8d357e63a161d0f613e4b2994f7a50291f69672ba00df1166896584731c62c5a  ./gantang-grid-designer/smoke-dim-labels-after-fix.png
-852649512ca544ab9baeeda2d2305f87368ff2484096df20fcd63e5898256cca  ./index.html
-712f370cc9796acfb494b641a8817f104627b41cb0243b59469c15f8384ff3e7  ./package.json
-ca441674f369bc2fd6b8503e4274b2111e3155da6d21b1af80c859d113b1648b  ./scripts/check-inline.js
+98ccf17aa10c20bb1301762618fcc9b6ab3a4e7f26b6071d64d0b41154df3875  ./gantang-grid-designer/vendor/jspdf.umd.min.js
+5b5799e6f8c680663207ac5b42ee14eed2a406fa7af48f50c154f0c0b1566946  ./gantang-grid-designer/vendor/pdf.min.js
+feabdf309770ed24bba31a5467836cdc8cf639c705af27d52b585b041bb8527b  ./gantang-grid-designer/vendor/pdf.worker.min.js
+769e65397d099ea3af3dbd944ad986dac481b585004507a112840b6e16728485  ./gantang-grid-designer/vendor/dxf.js
 ```
 
 ## 本地预览
