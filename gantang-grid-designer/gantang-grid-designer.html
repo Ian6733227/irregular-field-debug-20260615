@@ -1302,6 +1302,14 @@
           <button onclick="triggerLoadProject()">载入项目 JSON</button>
           <button onclick="saveProject()" id="saveProjectBtn" class="primary">保存项目</button>
         </div>
+        <div class="action-group">
+          <select id="projectSelect" onchange="loadSelectedProject(this.value)" title="切换已存项目">
+            <option value="">— 未命名 —</option>
+          </select>
+          <button onclick="newProject()" title="新建空白项目">新建</button>
+          <button onclick="saveCurrentProjectPrompt()" title="保存/另存为命名项目">存为项目</button>
+          <button onclick="deleteCurrentProject()" title="删除当前项目">删除</button>
+        </div>
         <input type="file" id="fileInput" onchange="loadProject(event)" accept=".json">
         <input type="file" id="drawingInput" onchange="importDrawing(event)" accept=".png,.jpg,.jpeg,.webp,.svg,image/png,image/jpeg,image/webp,image/svg+xml">
         <div class="action-group">
@@ -1463,12 +1471,32 @@
               <label>标定真实物理长度</label>
               <div class="field-row">
                 <input id="scaleLength" type="number" step="0.01" value="9.70" onchange="syncScaleLengthInputs(this.value)" style="flex: 1;">
-                <span>米 (m)</span>
+                <select id="scaleLengthUnit" onchange="onScaleUnitChange(this.value)">
+                  <option value="m">米 m</option>
+                  <option value="cm">厘米 cm</option>
+                  <option value="mm">毫米 mm</option>
+                  <option value="in">英寸 in</option>
+                </select>
               </div>
             </div>
             <button onclick="applyScaleRuler()" class="primary" id="applyScaleBtn" disabled>应用此标尺</button>
             <button onclick="applyPresetScale()" class="success">自动比例尺 (图签 1:175)</button>
           </div>
+          <div class="control-group">
+            <div class="section-title" style="margin-top:6px;">已知面积反推比例尺</div>
+            <p style="font-size:12px; line-height:1.5; margin:0; color:var(--muted);">
+              先在「区域」里画好并闭合一个真实面积已知的区域，选中后在此输入其真实面积，按当前单位反推比例尺。
+            </p>
+            <div class="field">
+              <label>选中区域真实面积</label>
+              <div class="field-row">
+                <input id="areaCalibValue" type="number" step="0.01" placeholder="例如 600" style="flex: 1;">
+                <span id="areaCalibUnitLabel">㎡</span>
+              </div>
+            </div>
+            <button onclick="applyAreaCalibration()" class="primary">按面积反推比例尺</button>
+          </div>
+          <div id="scaleConsistencyNote" style="display:none; font-size:12px; margin-top:6px; color:#9a6700; font-weight:700;"></div>
         </div>
 
         <!-- Mode controls: Grid Layout -->
@@ -1726,6 +1754,9 @@
     const DESIGNER_LOCAL_FILE_TARGET_ORIGIN = '*';
     const configuredHostOrigin = normalizeBridgeOrigin(configuredHostOriginParam);
     const DRAWING_HISTORY_STORAGE_KEY = 'gantang-drawing-history-v1';
+    const PROJECTS_STORAGE_KEY = 'gantang-projects-v1';
+    const ACTIVE_PROJECT_KEY = 'gantang-active-project-id';
+    let activeProjectId = null;
     const MAX_STORED_DRAWING_HISTORY = 12;
     const MAX_STORED_DRAWING_DATA_URL_LENGTH = 2.8 * 1024 * 1024;
     const DIRECT_DRAWING_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'svg'];
@@ -1971,6 +2002,11 @@
       scaleInput: document.getElementById('scaleInput'),
       scaleLength: document.getElementById('scaleLength'),
       scaleLengthInline: document.getElementById('scaleLengthInline'),
+      scaleLengthUnit: document.getElementById('scaleLengthUnit'),
+      projectSelect: document.getElementById('projectSelect'),
+      areaCalibValue: document.getElementById('areaCalibValue'),
+      areaCalibUnitLabel: document.getElementById('areaCalibUnitLabel'),
+      scaleConsistencyNote: document.getElementById('scaleConsistencyNote'),
       applyScaleBtn: document.getElementById('applyScaleBtn'),
       applyScaleBtnInline: document.getElementById('applyScaleBtnInline'),
       scaleRulerStatus: document.getElementById('scaleRulerStatus'),
@@ -2031,6 +2067,7 @@
         if (reloadingImage) return;
         appInitialized = true;
         saveHistory();
+        renderProjectSelect();
       }
       syncInputs();
       renderAll();
@@ -2538,6 +2575,62 @@
       state.scale.lengthM = Math.max(0, Number(state.scale.lengthM) || 9.70);
       state.scale.needsCalibration = Boolean(state.scale.needsCalibration);
       state.scale.source = state.scale.source || 'legacy';
+      state.scale.lengthUnit = SCALE_UNIT_FACTORS[state.scale.lengthUnit] ? state.scale.lengthUnit : 'm';
+    }
+
+    const SCALE_UNIT_FACTORS = { m: 1, cm: 0.01, mm: 0.001, in: 0.0254 };
+    const SCALE_UNIT_AREA_LABELS = { m: '㎡', cm: 'cm²', mm: 'mm²', in: 'in²' };
+    function currentScaleUnit() {
+      return SCALE_UNIT_FACTORS[state.scale.lengthUnit] ? state.scale.lengthUnit : 'm';
+    }
+    function lengthToMeters(value) {
+      return Number(value) * SCALE_UNIT_FACTORS[currentScaleUnit()];
+    }
+    function areaToSquareMeters(value) {
+      const f = SCALE_UNIT_FACTORS[currentScaleUnit()];
+      return Number(value) * f * f;
+    }
+    function onScaleUnitChange(unit) {
+      state.scale.lengthUnit = SCALE_UNIT_FACTORS[unit] ? unit : 'm';
+      if (els.areaCalibUnitLabel) els.areaCalibUnitLabel.textContent = SCALE_UNIT_AREA_LABELS[currentScaleUnit()];
+      persistDraft();
+    }
+    // 多段/多法交叉校验：与当前已校准比例尺差异过大则提示（非阻断）。
+    function checkScaleConsistency(newMpp, label) {
+      if (!els.scaleConsistencyNote) return;
+      const oldMpp = Number(state.scale.metersPerPixel);
+      const note = els.scaleConsistencyNote;
+      if (!state.scale.needsCalibration && Number.isFinite(oldMpp) && oldMpp > 0 && Number.isFinite(newMpp) && newMpp > 0) {
+        const diff = Math.abs(newMpp - oldMpp) / Math.max(oldMpp, newMpp);
+        if (diff > 0.15) {
+          note.textContent = `注意：${label || '新标定'} 得到 ${newMpp.toFixed(6)} m/px，与原 ${oldMpp.toFixed(6)} m/px 相差 ${(diff * 100).toFixed(1)}%，请复核标定是否一致。`;
+          note.style.display = 'block';
+          return;
+        }
+      }
+      note.textContent = '';
+      note.style.display = 'none';
+    }
+    function applyAreaCalibration() {
+      const region = state.regions[state.activeRegionIndex];
+      if (!region || !Array.isArray(region.points) || region.points.length < 3) {
+        alert('请先选中一个已闭合、至少 3 个顶点的区域，再按面积反推比例尺。');
+        return;
+      }
+      const areaPx = Math.abs(polygonArea(region.points));
+      const realArea = areaToSquareMeters(els.areaCalibValue ? els.areaCalibValue.value : 0);
+      if (!(areaPx > 0) || !(realArea > 0)) {
+        alert('真实面积或区域像素面积无效，无法反推比例尺。');
+        return;
+      }
+      const newMpp = Math.sqrt(realArea / areaPx);
+      checkScaleConsistency(newMpp, '面积反推');
+      state.scale.metersPerPixel = Math.max(1e-7, newMpp);
+      setScaleCalibrationState(false, 'area-back-calculation');
+      saveHistory();
+      syncInputs();
+      renderAll();
+      emitHostChange('scale-area-calibrated');
     }
 
     function setScaleCalibrationState(needsCalibration, source) {
@@ -3063,8 +3156,12 @@
     function syncInputs() {
       els.tileSize.value = state.tileSize;
       els.scaleInput.value = state.scale.metersPerPixel;
-      els.scaleLength.value = state.scale.lengthM;
-      els.scaleLengthInline.value = state.scale.lengthM;
+      const unit = currentScaleUnit();
+      const lenInUnit = round(state.scale.lengthM / SCALE_UNIT_FACTORS[unit], 4);
+      els.scaleLength.value = lenInUnit;
+      els.scaleLengthInline.value = lenInUnit;
+      if (els.scaleLengthUnit) els.scaleLengthUnit.value = unit;
+      if (els.areaCalibUnitLabel) els.areaCalibUnitLabel.textContent = SCALE_UNIT_AREA_LABELS[unit];
       els.straightenSlider.value = state.imageRotation;
       els.straightenVal.textContent = state.imageRotation + '°';
       els.rotationSlider.value = state.gridRotation;
@@ -4629,10 +4726,10 @@
     }
 
     function syncScaleLengthInputs(value) {
-      const len = Math.max(0, Number(value) || 0);
-      if (len > 0) state.scale.lengthM = len;
-      els.scaleLength.value = state.scale.lengthM;
-      els.scaleLengthInline.value = state.scale.lengthM;
+      const v = Math.max(0, Number(value) || 0);
+      if (els.scaleLength) els.scaleLength.value = v;
+      if (els.scaleLengthInline) els.scaleLengthInline.value = v;
+      if (v > 0) state.scale.lengthM = lengthToMeters(v); // lengthM 始终存米
       updateScaleRulerControls();
     }
 
@@ -4647,6 +4744,7 @@
       state.scale.metersPerPixel = 0.024694444;
       state.scale.points = [{ x: 390, y: 1466 }, { x: 783, y: 1466 }];
       state.scale.lengthM = 9.70;
+      state.scale.lengthUnit = 'm';
       setScaleCalibrationState(false, 'drawing-title-block-1:175');
       saveHistory();
       syncInputs();
@@ -4659,12 +4757,14 @@
       const p1 = state.scale.points[0];
       const p2 = state.scale.points[1];
       const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
-      const len = Number(els.scaleLengthInline.value || els.scaleLength.value);
-      if (dist > 0 && len > 0) {
-        els.scaleLength.value = len;
-        els.scaleLengthInline.value = len;
-        state.scale.metersPerPixel = len / dist;
-        state.scale.lengthM = len;
+      const rawLen = Number(els.scaleLengthInline.value || els.scaleLength.value);
+      const lenMeters = lengthToMeters(rawLen);
+      if (dist > 0 && lenMeters > 0) {
+        els.scaleLength.value = rawLen;
+        els.scaleLengthInline.value = rawLen;
+        checkScaleConsistency(lenMeters / dist, '两点标尺');
+        state.scale.metersPerPixel = lenMeters / dist;
+        state.scale.lengthM = lenMeters;
         setScaleCalibrationState(false, 'two-point-ruler');
         saveHistory();
         syncInputs();
@@ -5777,6 +5877,108 @@
       if (!validation.ready) {
         alert('当前项目未通过交付门禁，已导出草稿 JSON。草稿不能直接用于正式报价。');
       }
+    }
+
+    // ---- 多项目管理（localStorage；配额超限时降级为只存几何） ----
+    function getProjectsStore() {
+      try {
+        const raw = localStorage.getItem(PROJECTS_STORAGE_KEY);
+        const parsed = raw ? JSON.parse(raw) : {};
+        return parsed && typeof parsed === 'object' ? parsed : {};
+      } catch (err) { return {}; }
+    }
+    function saveProjectsStore(store) {
+      try {
+        localStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(store));
+        return true;
+      } catch (err) {
+        try {
+          const slim = {};
+          Object.keys(store).forEach(id => {
+            slim[id] = { ...store[id], data: { ...store[id].data, imageDataUrl: null } };
+          });
+          localStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(slim));
+          alert('项目过多或底图过大，已只保存几何与参数，未内嵌底图；重新打开后需重新导入底图。');
+          return true;
+        } catch (e2) {
+          alert('浏览器存储已满，项目保存失败。请删除旧项目或用「保存项目」导出 JSON 备份。');
+          return false;
+        }
+      }
+    }
+    function newProjectId() {
+      return 'proj-' + Date.now() + '-' + Math.random().toString(16).slice(2, 8);
+    }
+    function renderProjectSelect() {
+      if (!els.projectSelect) return;
+      const store = getProjectsStore();
+      const ids = Object.keys(store).sort((a, b) => (store[b].updatedAt || '').localeCompare(store[a].updatedAt || ''));
+      els.projectSelect.innerHTML = ['<option value="">— 未命名 —</option>']
+        .concat(ids.map(id => `<option value="${escapeHtml(id)}">${escapeHtml(store[id].name || id)}</option>`))
+        .join('');
+      els.projectSelect.value = activeProjectId && store[activeProjectId] ? activeProjectId : '';
+    }
+    function saveCurrentProjectPrompt() {
+      const store = getProjectsStore();
+      const current = activeProjectId && store[activeProjectId] ? store[activeProjectId] : null;
+      const name = prompt('项目名称：', current ? current.name : '');
+      if (name === null) return;
+      const trimmed = String(name).trim();
+      if (!trimmed) { alert('项目名称不能为空。'); return; }
+      let id = activeProjectId && store[activeProjectId] ? activeProjectId : null;
+      if (!id) {
+        const existing = Object.keys(store).find(k => store[k].name === trimmed);
+        id = existing || newProjectId();
+      }
+      store[id] = { id, name: trimmed, updatedAt: new Date().toISOString(), data: exportProjectData({ exportMode: 'draft' }) };
+      if (saveProjectsStore(store)) {
+        activeProjectId = id;
+        try { localStorage.setItem(ACTIVE_PROJECT_KEY, id); } catch (e) {}
+        renderProjectSelect();
+        if (els.planStatus) els.planStatus.textContent = `已保存项目「${trimmed}」`;
+      }
+    }
+    function loadSelectedProject(id) {
+      if (!id) return;
+      const store = getProjectsStore();
+      const rec = store[id];
+      if (!rec || !rec.data) { alert('项目不存在。'); renderProjectSelect(); return; }
+      const hasGeom = state.regions.some(r => r.points && r.points.length > 0);
+      if (hasGeom && !confirm('切换项目会替换当前画面，未保存的改动会丢失，是否继续？')) {
+        renderProjectSelect();
+        return;
+      }
+      try {
+        applyProjectData(rec.data, { source: 'project-manager' });
+        activeProjectId = id;
+        try { localStorage.setItem(ACTIVE_PROJECT_KEY, id); } catch (e) {}
+        renderProjectSelect();
+      } catch (err) {
+        alert('载入项目失败：' + (err.message || err));
+      }
+    }
+    function deleteCurrentProject() {
+      const store = getProjectsStore();
+      if (!activeProjectId || !store[activeProjectId]) { alert('当前没有已保存的项目可删除。'); return; }
+      const name = store[activeProjectId].name || activeProjectId;
+      if (!confirm(`确认删除项目「${name}」？此操作不可撤销。`)) return;
+      delete store[activeProjectId];
+      saveProjectsStore(store);
+      activeProjectId = null;
+      try { localStorage.removeItem(ACTIVE_PROJECT_KEY); } catch (e) {}
+      renderProjectSelect();
+    }
+    function newProject() {
+      const hasGeom = state.regions.some(r => r.points && r.points.length > 0);
+      if (hasGeom && !confirm('新建空白项目会清空当前画面，未保存的改动会丢失，是否继续？')) return;
+      resetRegionsForNewDrawing();
+      activeProjectId = null;
+      try { localStorage.removeItem(ACTIVE_PROJECT_KEY); } catch (e) {}
+      saveHistory();
+      syncInputs();
+      renderAll();
+      renderProjectSelect();
+      emitHostChange('project-new');
     }
 
     function triggerLoadProject() {
