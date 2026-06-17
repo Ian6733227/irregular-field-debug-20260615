@@ -1311,7 +1311,7 @@
           <button onclick="deleteCurrentProject()" title="删除当前项目">删除</button>
         </div>
         <input type="file" id="fileInput" onchange="loadProject(event)" accept=".json">
-        <input type="file" id="drawingInput" onchange="importDrawing(event)" accept=".png,.jpg,.jpeg,.webp,.svg,image/png,image/jpeg,image/webp,image/svg+xml">
+        <input type="file" id="drawingInput" onchange="importDrawing(event)" accept=".png,.jpg,.jpeg,.webp,.svg,.pdf,.dxf,image/png,image/jpeg,image/webp,image/svg+xml,application/pdf">
         <div class="action-group">
           <button onclick="exportCSV()" id="exportCsvBtn" class="success">导出 CSV</button>
           <button onclick="exportCutSVG()" id="exportSvgBtn" class="success">导出裁切 SVG</button>
@@ -1735,8 +1735,10 @@
     <p>直接使用浏览器的打印（Ctrl/Cmd + P）不会输出报表内容，这是为了避免打印到过期或未通过交付门禁的数据。</p>
   </div>
 
-  <!-- 本地 vendor 库（离线，不走 CDN）：jsPDF MIT -->
+  <!-- 本地 vendor 库（离线，不走 CDN）：jsPDF MIT / PDF.js Apache-2.0 / dxf MIT -->
   <script src="vendor/jspdf.umd.min.js"></script>
+  <script src="vendor/pdf.min.js"></script>
+  <script src="vendor/dxf.js"></script>
 
   <!-- JavaScript App Code -->
   <script>
@@ -1926,6 +1928,11 @@
     // 允许同源/带 CORS 头的底图在 canvas 上做 getImageData / toDataURL 而不污染画布。
     image.crossOrigin = 'anonymous';
     image.src = currentImageSource;
+
+    // PDF.js worker 指向本地 vendor 文件（离线，不走 CDN）。
+    if (window.pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
+    }
     let appInitialized = false;
 
     // App Global State
@@ -5994,58 +6001,142 @@
       document.getElementById('drawingInput').click();
     }
 
+    const MAX_DECODE_DIMENSION = 4000; // 解码栅格最长边上限，控制内存与识别采样
+
+    function applyImportedImage(fileName, dataUrl, mimeType, kind, opts = {}) {
+      currentImagePath = fileName;
+      currentImageDataUrl = dataUrl;
+      currentImageMimeType = mimeType;
+      currentImageKind = kind;
+      currentImageSource = dataUrl;
+      resetRegionsForNewDrawing();
+      image.src = dataUrl;
+      if (opts.suggestedMpp && Number.isFinite(opts.suggestedMpp) && opts.suggestedMpp > 0) {
+        state.scale.metersPerPixel = opts.suggestedMpp;
+        // DXF 单位推算只作“建议比例”，仍标未校准，必须人工确认。
+        setScaleCalibrationState(true, 'dxf-units-suggested');
+      }
+      saveHistory();
+      syncInputs();
+      emitHostChange('drawing-imported');
+    }
+
     function importDrawing(event) {
       const file = event.target.files[0];
       event.target.value = '';
       if (!file) return;
 
       const ext = file.name.split('.').pop().toLowerCase();
-      const isRasterImage = file.type.startsWith('image/') && DIRECT_DRAWING_EXTENSIONS.includes(ext)
-        || DIRECT_DRAWING_EXTENSIONS.includes(ext);
+      const hasExistingGeometry = state.regions.some(r => r.points && r.points.length > 0);
+      if (hasExistingGeometry && !confirm('导入新图纸会清空当前框选区域和标尺点，是否继续？')) {
+        return;
+      }
 
-      if (isRasterImage) {
-        const hasExistingGeometry = state.regions.some(r => r.points && r.points.length > 0);
-        if (hasExistingGeometry && !confirm('导入新图纸会清空当前框选区域和标尺点，是否继续？')) {
-          return;
-        }
-
+      if (DIRECT_DRAWING_EXTENSIONS.includes(ext)) {
         const reader = new FileReader();
         reader.onload = (e) => {
-          const dataUrl = e.target.result;
-          rememberImportedDrawing(file, dataUrl);
-          currentImagePath = file.name;
-          currentImageDataUrl = dataUrl;
-          currentImageMimeType = file.type || mimeFromExtension(ext);
-          currentImageKind = 'imported-raster';
-          currentImageSource = dataUrl;
-          resetRegionsForNewDrawing();
-          image.src = dataUrl;
-          saveHistory();
-          syncInputs();
-          emitHostChange('drawing-imported');
+          rememberImportedDrawing(file, e.target.result);
+          applyImportedImage(file.name, e.target.result, file.type || mimeFromExtension(ext), 'imported-raster');
         };
         reader.readAsDataURL(file);
         return;
       }
-
+      if (ext === 'pdf') { importPdfDrawing(file); return; }
+      if (ext === 'dxf') { importDxfDrawing(file); return; }
       showUnsupportedDrawingFormatNotice(file.name, ext);
+    }
+
+    function importPdfDrawing(file) {
+      if (!window.pdfjsLib) { alert('PDF 组件未加载（vendor/pdf.min.js）。'); return; }
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        pdfjsLib.getDocument({ data: new Uint8Array(e.target.result) }).promise.then((pdf) => {
+          let pageNum = 1;
+          if (pdf.numPages > 1) {
+            const ans = prompt(`该 PDF 共 ${pdf.numPages} 页，导入第几页？`, '1');
+            if (ans === null) return null;
+            pageNum = Math.min(pdf.numPages, Math.max(1, parseInt(ans, 10) || 1));
+          }
+          return pdf.getPage(pageNum).then((page) => {
+            const base = page.getViewport({ scale: 1 });
+            const fit = Math.min(MAX_DECODE_DIMENSION / base.width, MAX_DECODE_DIMENSION / base.height, 4);
+            const viewport = page.getViewport({ scale: Math.max(0.2, fit) });
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.round(viewport.width);
+            canvas.height = Math.round(viewport.height);
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+            return page.render({ canvasContext: ctx, viewport }).promise.then(() => {
+              applyImportedImage(file.name.replace(/\.pdf$/i, '') + `-p${pageNum}.png`, canvas.toDataURL('image/png'), 'image/png', 'imported-pdf-raster');
+            });
+          });
+        }).catch((err) => {
+          alert('PDF 解析失败：' + (err && err.message || err));
+        });
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    const DXF_UNIT_TO_METERS = { 1: 0.0254, 2: 0.3048, 4: 0.001, 5: 0.01, 6: 1 }; // in/ft/mm/cm/m
+    function importDxfDrawing(file) {
+      const Helper = window.dxf && (window.dxf.Helper || window.dxf.default);
+      if (!Helper) { alert('DXF 组件未加载（vendor/dxf.js）。'); return; }
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        let svg, parsed;
+        try {
+          const helper = new Helper(e.target.result);
+          svg = helper.toSVG();
+          parsed = helper.parsed;
+        } catch (err) {
+          alert('DXF 解析失败：' + (err && err.message || err));
+          return;
+        }
+        const vb = svg.match(/viewBox="([\d.eE+-]+) ([\d.eE+-]+) ([\d.eE+-]+) ([\d.eE+-]+)"/);
+        const vbW = vb ? parseFloat(vb[3]) : 0;
+        const vbH = vb ? parseFloat(vb[4]) : 0;
+        if (!(vbW > 0) || !(vbH > 0)) { alert('DXF 没有可识别的图形范围。'); return; }
+        const fit = Math.min(MAX_DECODE_DIMENSION / vbW, MAX_DECODE_DIMENSION / vbH, 8);
+        const cw = Math.max(1, Math.round(vbW * Math.max(0.1, fit)));
+        const ch = Math.max(1, Math.round(vbH * Math.max(0.1, fit)));
+        let sizedSvg = svg.replace('<svg ', `<svg width="${cw}" height="${ch}" `);
+        if (!/xmlns=/.test(sizedSvg)) sizedSvg = sizedSvg.replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" ');
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = cw; canvas.height = ch;
+          const ctx = canvas.getContext('2d');
+          ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cw, ch);
+          ctx.drawImage(img, 0, 0, cw, ch);
+          let dataUrl;
+          try { dataUrl = canvas.toDataURL('image/png'); }
+          catch (err) { alert('DXF 渲染失败（画布导出）。'); return; }
+          let suggestedMpp = 0;
+          try {
+            // dxf 库把 $INSUNITS 归一化为 header.insUnits（数值码）。
+            const insunits = parsed && parsed.header && (parsed.header.insUnits ?? parsed.header['$INSUNITS']);
+            const f = DXF_UNIT_TO_METERS[insunits];
+            if (f) suggestedMpp = (vbW * f) / cw;
+          } catch (e2) {}
+          applyImportedImage(file.name.replace(/\.dxf$/i, '') + '.png', dataUrl, 'image/png', 'imported-dxf-raster', { suggestedMpp });
+        };
+        img.onerror = () => alert('DXF 渲染失败（SVG 光栅化）。');
+        img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(sizedSvg);
+      };
+      reader.readAsText(file);
     }
 
     function showUnsupportedDrawingFormatNotice(fileName, ext) {
       const lowerExt = String(ext || '').toLowerCase();
-      if (lowerExt === 'pdf') {
-        alert(`不能直接导入 ${fileName}。请先运行本地转换命令生成 PNG，再用“导入图纸”导入：\n\nnpm run prepare:plan-import -- --source "${fileName}" --pdf-page 1 --out-dir gantang-grid-designer/import-batch`);
+      if (lowerExt === 'dwg') {
+        alert(`不能直接导入 ${fileName}。DWG 为私有格式：请先用 DWG TrueView 或 ODA File Converter（均免费）转成 DXF 再导入。本工具已支持直接导入 DXF / PDF / PNG / JPG / WEBP / SVG。`);
         return;
       }
       if (['doc', 'docx'].includes(lowerExt)) {
-        alert(`不能直接导入 ${fileName}。请先将 Word 转成 PDF/PNG，再导入 PNG。`);
+        alert(`不能直接导入 ${fileName}。请先将 Word 转成 PDF，再用“导入图纸”导入（PDF 现已支持直接导入）。`);
         return;
       }
-      if (['dwg', 'dxf'].includes(lowerExt)) {
-        alert(`不能直接导入 ${fileName}。CAD/DXF 请走预处理链路生成可核对 PNG/SVG 或 tile-layout 模型后再进入本工具。`);
-        return;
-      }
-      alert('暂不支持该文件格式。当前网页主入口只直接支持 PNG/JPG/JPEG/WEBP/SVG。');
+      alert('暂不支持该文件格式。当前直接支持 PNG/JPG/JPEG/WEBP/SVG/PDF/DXF；DWG 请先转 DXF。');
     }
 
     function mimeFromExtension(ext) {
