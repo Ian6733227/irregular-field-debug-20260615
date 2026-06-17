@@ -198,6 +198,11 @@
       height: 100%;
     }
 
+    #planCanvas {
+      /* 触屏作图：禁用浏览器默认手势（滚动/缩放），让 pointer 事件接管。 */
+      touch-action: none;
+    }
+
     .canvas-container > canvas {
       flex: 1 1 auto;
       min-height: 0;
@@ -2385,6 +2390,35 @@
         }
       });
 
+      // 扣除区几何门禁：无论候选确认还是手动编辑，洞必须落在铺装区内、且洞之间不重叠。
+      const closedTilingPolygons = closedTilingRegions.map(r => r.points);
+      const closedHoles = activeRegions.filter(r => r.type === 'hole' && r.closed !== false && r.points.length >= 3);
+      if (closedTilingPolygons.length) {
+        closedHoles.forEach((hole) => {
+          const insideCount = hole.points.filter(p => pointInAnyPolygon(p, closedTilingPolygons)).length;
+          if (insideCount / hole.points.length < 0.8) {
+            errors.push(severityEntry(
+              'critical',
+              'hole_outside_tiling',
+              `${hole.name || hole.id} 扣除区越出铺装区域边界，请调整后再交付。`,
+              { regionId: hole.id }
+            ));
+          }
+        });
+      }
+      for (let i = 0; i < closedHoles.length; i++) {
+        for (let j = i + 1; j < closedHoles.length; j++) {
+          if (polygonsIntersect(closedHoles[i].points, closedHoles[j].points)) {
+            errors.push(severityEntry(
+              'critical',
+              'hole_overlap',
+              `${closedHoles[i].name || closedHoles[i].id} 与 ${closedHoles[j].name || closedHoles[j].id} 扣除区互相重叠，请合并或调整。`,
+              { regionIds: [closedHoles[i].id, closedHoles[j].id] }
+            ));
+          }
+        }
+      }
+
       if (!generatedCells.length) {
         errors.push(severityEntry('critical', 'no_valid_tiles', '当前没有生成有效铺装格子。'));
       }
@@ -4031,11 +4065,16 @@
     }
 
     // Interactive Drawing Event Listeners
-    els.planCanvas.addEventListener('mousedown', (event) => {
+    els.planCanvas.addEventListener('pointerdown', (event) => {
       const rect = els.planCanvas.getBoundingClientRect();
       const screenPt = { x: event.clientX - rect.left, y: event.clientY - rect.top };
 
 	      if (event.button === 2) return; // Right click handles elsewhere
+      // 触屏/笔：长按删除点（替代桌面右键删除）。
+      if (event.pointerType === 'touch' || event.pointerType === 'pen') {
+        scheduleTouchLongPress(screenPt);
+      }
+      try { els.planCanvas.setPointerCapture(event.pointerId); } catch (err) {}
 
 	      if (state.mode === 'pan' || event.shiftKey || event.button === 1) {
 	        state.dragging = true;
@@ -4132,10 +4171,14 @@
       }
     });
 
-    els.planCanvas.addEventListener('mousemove', (event) => {
+    els.planCanvas.addEventListener('pointermove', (event) => {
       const rect = els.planCanvas.getBoundingClientRect();
       const screenPt = { x: event.clientX - rect.left, y: event.clientY - rect.top };
       state.mousePos = screenPt;
+      // 移动超过阈值即取消长按删除（视为拖动/绘制）。
+      if (touchLongPressStart && Math.hypot(screenPt.x - touchLongPressStart.x, screenPt.y - touchLongPressStart.y) > 8) {
+        cancelTouchLongPress();
+      }
 
       if (state.dragging && state.lastMouse) {
         state.pan.x += screenPt.x - state.lastMouse.x;
@@ -4179,7 +4222,11 @@
       }
     });
 
-	    window.addEventListener('mouseup', () => {
+	    function onPointerEnd(event) {
+	      cancelTouchLongPress();
+	      if (event && typeof event.pointerId === 'number') {
+	        try { els.planCanvas.releasePointerCapture(event.pointerId); } catch (err) {}
+	      }
 	      state.dragging = false;
 	      state.lastMouse = null;
 	      updatePlanCanvasCursor();
@@ -4195,7 +4242,36 @@
 	          ? 'grid-origin-dragged'
 	          : (targetType === 'scale' ? 'scale-ruler-point-dragged' : 'region-point-dragged'));
 	      }
-	    });
+	    }
+	    window.addEventListener('pointerup', onPointerEnd);
+	    window.addEventListener('pointercancel', onPointerEnd);
+
+	    // 触屏/笔长按删除点：仅当按在已有顶点上（已置 dragTarget=point、未新增点）时生效。
+	    let touchLongPressTimer = null;
+	    let touchLongPressStart = null;
+	    function scheduleTouchLongPress(screenPt) {
+	      cancelTouchLongPress();
+	      touchLongPressStart = screenPt;
+	      touchLongPressTimer = setTimeout(handleTouchLongPress, 600);
+	    }
+	    function cancelTouchLongPress() {
+	      if (touchLongPressTimer) clearTimeout(touchLongPressTimer);
+	      touchLongPressTimer = null;
+	      touchLongPressStart = null;
+	    }
+	    function handleTouchLongPress() {
+	      touchLongPressTimer = null;
+	      touchLongPressStart = null;
+	      const tgt = state.dragTarget;
+	      if (!tgt || tgt.type !== 'point') return;
+	      const region = state.regions[tgt.rIdx];
+	      if (!region || !Array.isArray(region.points) || tgt.pIdx >= region.points.length) return;
+	      region.points.splice(tgt.pIdx, 1);
+	      state.dragTarget = null;
+	      saveHistory();
+	      renderAll();
+	      emitHostChange('region-point-deleted');
+	    }
 
     els.planCanvas.addEventListener('contextmenu', (event) => {
       event.preventDefault();
