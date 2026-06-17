@@ -212,6 +212,19 @@
   - 真实 iPad/Safari 触摸、真实宿主 BOM/报价系统仍未接入。
   - 本批为 Claude 实施 + 自测，尚未经独立 reviewer 终审。
 
+## 2026-06-17 独立复核修复（Claude 修，浏览器实测）
+
+- 新版本标记：`v20260617-batch2-rev` / `manifest.version=1.2.1-review-fixes`
+- 三个独立 reviewer（正确性/回归/安全）从源码重审，发现并修复：
+  - **P0 报价/候选 XSS**：`renderQuotePanel` 与候选列表 onclick 原用 `escapeJsString`（不转义 `"`），material 来自项目 JSON 可注入。改为 `data-` 属性 + `escapeHtml`，从 element 读取。实测恶意 material 不执行、无 live `<img>`。
+  - **P1 贴边洞误杀 + 越界绕过**：`hole_outside_tiling` / `candidateInsideClosedTiling` 由"顶点数 80%"改为**面积占比采样**（新增 `polygonInsideFraction`，门禁阈值 0.95、候选 0.9）。贴右/下边洞不再误报；多顶点+大外伸洞被正确拦截。
+  - **P1 共边洞误判重叠**：`hole_overlap` / `candidateOverlapsExistingHole` 由 `polygonsIntersect`（共边/共点即 true）改为**真实重叠面积**（新增 `polygonsRealOverlap`，阈值 2% 较小洞面积）。相邻不重叠的洞/候选可正常确认；真实重叠仍拦截。
+  - **P1 单位切换陷阱**：`onScaleUnitChange` 现调用 `syncInputs()` 按新单位重算输入框（含内联标尺单位标签），杜绝"切单位不重输→100× 比例错误"。实测 9.7m↔970cm 应用后 mpp 一致。
+  - **P1 报价/单位 round-trip**：`exportProjectData`/`persistDraft` 增加 `pricing`（mode+unitPrices）与 `scale.lengthUnit`；`applyProjectData`/`loadInitialProjectState` 恢复。实测单价 7 往返保留。
+  - **P2 解码上限地板**：PDF/DXF 渲染 `Math.max(0.2/0.1,fit)` 地板下调，不再突破 `MAX_DECODE_DIMENSION`。
+- 验证：`npm test` 通过；Chrome 预览实测（console error=0）：XSS 不触发、贴边洞/共边洞/真实重叠/越界绕过、单位切换、报价 round-trip、候选确认回归全部符合预期。
+- 未验证边界：识别召回/精确率仍需真实带标注样本；真实 iPad/Safari、真实宿主 BOM/报价未接入；本批仍为 Claude 实施+自测+一轮独立 reviewer，建议正式发布前再过一次人评。
+
 ## SHA-256
 
 ```text
@@ -219,9 +232,9 @@
 712f370cc9796acfb494b641a8817f104627b41cb0243b59469c15f8384ff3e7  ./package.json
 ca441674f369bc2fd6b8503e4274b2111e3155da6d21b1af80c859d113b1648b  ./scripts/check-inline.js
 852649512ca544ab9baeeda2d2305f87368ff2484096df20fcd63e5898256cca  ./index.html
-799b4013445dbfcce77e04de72d94d161ae06fa8d758e6d296ec1f5db8b6e193  ./gantang-grid-designer/gantang-grid-designer.html
+13827942fec4560eefba41a7446a657df6b51a43833512cd077a103b6c33d414  ./gantang-grid-designer/gantang-grid-designer.html
 2c3dff1c92da22afa14ec9fdd30cb6e98f2eb1ec3fe73878e06ffbcb9d6340b5  ./gantang-grid-designer/gantang-grid-designer-integration.md
-5b20b953a7edc3ab4a840540269dc28bef8e1c7f09a0d6be08fe1bc0e0cd134b  ./gantang-grid-designer/manifest.json
+e58bbbdefd856e35b915f7598047854af7d7611912dc14aba3611bf2a024da4b  ./gantang-grid-designer/manifest.json
 b4a8fc495f55767c9a9d28f4b15fb337e235975ea26f9cebda330a6d44dfc6ba  ./gantang-grid-designer/integration-host-demo.html
 1d2ab502040cf7ae86348b0aeeb6cd6f3b30b4d49950e14f6b2592d5bc84e6e8  ./gantang-grid-designer/gantang-page08-plan.png
 5cfc1a057c26f59ab191821787ff5e01848b73cc40e954e2b061a04dfa4bb86f  ./gantang-grid-designer/import-batch/cad-screenshot-06.png

@@ -1555,7 +1555,7 @@
               <label>比例尺校准</label>
               <div class="scale-quick-grid">
                 <div>
-                  <span class="mini-label">标尺长度 (m)</span>
+                  <span class="mini-label">标尺长度 (<span id="scaleLengthInlineUnit">m</span>)</span>
                   <input id="scaleLengthInline" type="number" step="0.01" value="9.70" onchange="syncScaleLengthInputs(this.value)">
                 </div>
                 <button onclick="applyPresetScale()">图签 1:175</button>
@@ -2034,6 +2034,7 @@
       scaleInput: document.getElementById('scaleInput'),
       scaleLength: document.getElementById('scaleLength'),
       scaleLengthInline: document.getElementById('scaleLengthInline'),
+      scaleLengthInlineUnit: document.getElementById('scaleLengthInlineUnit'),
       scaleLengthUnit: document.getElementById('scaleLengthUnit'),
       projectSelect: document.getElementById('projectSelect'),
       areaCalibValue: document.getElementById('areaCalibValue'),
@@ -2468,8 +2469,8 @@
       const closedHoles = activeRegions.filter(r => r.type === 'hole' && r.closed !== false && r.points.length >= 3);
       if (closedTilingPolygons.length) {
         closedHoles.forEach((hole) => {
-          const insideCount = hole.points.filter(p => pointInAnyPolygon(p, closedTilingPolygons)).length;
-          if (insideCount / hole.points.length < 0.8) {
+          // 面积占比法：贴铺装区边界的洞不误杀，大幅外伸的洞会被拦。
+          if (polygonInsideFraction(hole.points, closedTilingPolygons) < 0.95) {
             errors.push(severityEntry(
               'critical',
               'hole_outside_tiling',
@@ -2481,7 +2482,7 @@
       }
       for (let i = 0; i < closedHoles.length; i++) {
         for (let j = i + 1; j < closedHoles.length; j++) {
-          if (polygonsIntersect(closedHoles[i].points, closedHoles[j].points)) {
+          if (polygonsRealOverlap(closedHoles[i].points, closedHoles[j].points)) {
             errors.push(severityEntry(
               'critical',
               'hole_overlap',
@@ -2628,7 +2629,8 @@
     }
     function onScaleUnitChange(unit) {
       state.scale.lengthUnit = SCALE_UNIT_FACTORS[unit] ? unit : 'm';
-      if (els.areaCalibUnitLabel) els.areaCalibUnitLabel.textContent = SCALE_UNIT_AREA_LABELS[currentScaleUnit()];
+      // 关键：切换单位后必须把输入框按新单位重算显示，否则旧数字会被当成新单位（可致 100× 比例错误）。
+      syncInputs();
       persistDraft();
     }
     // 多段/多法交叉校验：与当前已校准比例尺差异过大则提示（非阻断）。
@@ -3064,6 +3066,11 @@
           state.tileSize = loaded.tileSize || 0.25;
           state.autoSnap = loaded.autoSnap ?? state.autoSnap;
           state.showMagnifier = loaded.showMagnifier ?? state.showMagnifier;
+          if (loaded.pricing && typeof loaded.pricing === 'object') {
+            quoteState.mode = loaded.pricing.mode === 'per-area' ? 'per-area' : 'per-tile';
+            quoteState.unitPrices = (loaded.pricing.unitPrices && typeof loaded.pricing.unitPrices === 'object')
+              ? { ...loaded.pricing.unitPrices } : {};
+          }
           state.activeRegionIndex = Math.max(0, state.regions.length - 1);
           if (reloadingImage) return true;
         } catch(e) {
@@ -3198,6 +3205,7 @@
       els.scaleLength.value = lenInUnit;
       els.scaleLengthInline.value = lenInUnit;
       if (els.scaleLengthUnit) els.scaleLengthUnit.value = unit;
+      if (els.scaleLengthInlineUnit) els.scaleLengthInlineUnit.textContent = unit;
       if (els.areaCalibUnitLabel) els.areaCalibUnitLabel.textContent = SCALE_UNIT_AREA_LABELS[unit];
       els.straightenSlider.value = state.imageRotation;
       els.straightenVal.textContent = state.imageRotation + '°';
@@ -3297,16 +3305,16 @@
           ? `直径 ${formatMeters(candidate.metrics.diameterM)}`
           : (candidate.metrics?.widthM ? `${formatMeters(candidate.metrics.widthM)} × ${formatMeters(candidate.metrics.heightM)}` : `${candidate.points.length}点`);
         const confidence = Math.round(candidate.confidence * 100);
-        const safeId = escapeJsString(candidate.id);
+        const safeId = escapeHtml(candidate.id);
         return `
-          <div class="obstacle-candidate-item${selected}" onclick="selectObstacleCandidate('${safeId}')">
+          <div class="obstacle-candidate-item${selected}" data-candidate-id="${safeId}" onclick="selectObstacleCandidate(this.dataset.candidateId)">
             <div class="obstacle-candidate-meta">
               <strong>${idx + 1}. ${escapeHtml(obstacleKindLabel(candidate.kind))}候选 · ${confidence}%</strong>
               <span>${escapeHtml(sizeLabel)} · ${escapeHtml(candidate.shape)}</span>
             </div>
             <div class="obstacle-candidate-actions">
-              <button class="success" title="确认并转为扣除区" onclick="event.stopPropagation(); confirmObstacleCandidate('${safeId}')">✓</button>
-              <button class="danger-outline" title="忽略候选" onclick="event.stopPropagation(); ignoreObstacleCandidate('${safeId}')">×</button>
+              <button class="success" title="确认并转为扣除区" data-candidate-id="${safeId}" onclick="event.stopPropagation(); confirmObstacleCandidate(this.dataset.candidateId)">✓</button>
+              <button class="danger-outline" title="忽略候选" data-candidate-id="${safeId}" onclick="event.stopPropagation(); ignoreObstacleCandidate(this.dataset.candidateId)">×</button>
             </div>
           </div>
         `;
@@ -3486,6 +3494,47 @@
       return false;
     }
 
+    function polygonBBox(poly) {
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (const p of poly) { if (p.x < x0) x0 = p.x; if (p.y < y0) y0 = p.y; if (p.x > x1) x1 = p.x; if (p.y > y1) y1 = p.y; }
+      return { x0, y0, x1, y1 };
+    }
+
+    // poly 落在 containerPolygons(并集)内部的面积占比（网格采样估计）。
+    // 用面积而非顶点数，避免射线法对贴边顶点的方向性误判，也堵住"多顶点+大外伸"绕过。
+    function polygonInsideFraction(poly, containerPolygons, grid = 18) {
+      if (!Array.isArray(poly) || poly.length < 3 || !containerPolygons.length) return 0;
+      const b = polygonBBox(poly);
+      const w = b.x1 - b.x0, h = b.y1 - b.y0;
+      if (w <= 0 || h <= 0) return 0;
+      let inPoly = 0, inBoth = 0;
+      for (let j = 0; j < grid; j++) for (let i = 0; i < grid; i++) {
+        const pt = { x: b.x0 + (i + 0.5) / grid * w, y: b.y0 + (j + 0.5) / grid * h };
+        if (!pointInPolygon(pt, poly)) continue;
+        inPoly++;
+        if (pointInAnyPolygon(pt, containerPolygons)) inBoth++;
+      }
+      return inPoly === 0 ? 0 : inBoth / inPoly;
+    }
+
+    // 两多边形是否“真实重叠”（共边/共点不算）：用包围盒交集内的采样估计重叠面积。
+    function polygonsRealOverlap(a, b, minFrac = 0.02, grid = 16) {
+      if (!Array.isArray(a) || !Array.isArray(b) || a.length < 3 || b.length < 3) return false;
+      const ba = polygonBBox(a), bb = polygonBBox(b);
+      const ix0 = Math.max(ba.x0, bb.x0), iy0 = Math.max(ba.y0, bb.y0);
+      const ix1 = Math.min(ba.x1, bb.x1), iy1 = Math.min(ba.y1, bb.y1);
+      const w = ix1 - ix0, h = iy1 - iy0;
+      if (w <= 0 || h <= 0) return false; // 包围盒不相交（含共边/共点退化）
+      let both = 0;
+      for (let j = 0; j < grid; j++) for (let i = 0; i < grid; i++) {
+        const pt = { x: ix0 + (i + 0.5) / grid * w, y: iy0 + (j + 0.5) / grid * h };
+        if (pointInPolygon(pt, a) && pointInPolygon(pt, b)) both++;
+      }
+      const overlapArea = (both / (grid * grid)) * w * h;
+      const minArea = Math.min(Math.abs(polygonArea(a)), Math.abs(polygonArea(b)));
+      return minArea > 0 && overlapArea > minFrac * minArea;
+    }
+
     function candidateInsideClosedTiling(candidate) {
       const points = Array.isArray(candidate.points) ? candidate.points : [];
       const center = candidate.center || polygonCenter(points);
@@ -3495,11 +3544,8 @@
         .map(region => region.points);
       if (!tilingPolygons.length) return false;
       if (!pointInAnyPolygon(center, tilingPolygons)) return false;
-      // 不止验中心点：要求候选多边形绝大部分顶点也落在铺装区内，拒绝大幅越界的候选。
-      if (points.length >= 3) {
-        const insideCount = points.filter(p => pointInAnyPolygon(p, tilingPolygons)).length;
-        if (insideCount / points.length < 0.8) return false;
-      }
+      // 按面积占比判断，而非顶点数：贴边候选不误杀、大幅外伸候选会被拒。
+      if (points.length >= 3 && polygonInsideFraction(points, tilingPolygons) < 0.9) return false;
       return true;
     }
 
@@ -3511,8 +3557,8 @@
       return state.regions
         .filter(region => region.type === 'hole' && region.points.length >= 3)
         .some((region) => {
-          // 多边形实际相交判断，而不是仅比中心距。
-          if (points.length >= 3 && polygonsIntersect(points, region.points)) return true;
+          // 真实重叠面积判断（共边/共点不算重叠）。
+          if (points.length >= 3 && polygonsRealOverlap(points, region.points)) return true;
           const holeCenter = polygonCenter(region.points);
           return holeCenter && Math.hypot(center.x - holeCenter.x, center.y - holeCenter.y) < radius * 0.75;
         });
@@ -5765,7 +5811,7 @@
       els.quotePanel.innerHTML = q.lines.map((l) => {
         const qty = q.mode === 'per-area' ? (l.netCoveredArea_m2.toFixed(2) + '㎡') : (l.totalTilesCount + '块');
         return `<div class="cut-group-item"><span>${escapeHtml(l.material)} · ${qty}</span>`
-          + `<span><input type="number" min="0" step="0.01" value="${l.unitPrice || ''}" placeholder="${unitLabel}" style="width:84px;" onchange="setMaterialPrice('${escapeJsString(l.material)}', this.value)"> = <strong>${l.subtotal.toFixed(2)}</strong></span></div>`;
+          + `<span><input type="number" min="0" step="0.01" value="${l.unitPrice || ''}" placeholder="${unitLabel}" style="width:84px;" data-material="${escapeHtml(l.material)}" onchange="setMaterialPrice(this.dataset.material, this.value)"> = <strong>${l.subtotal.toFixed(2)}</strong></span></div>`;
       }).join('') + `<div class="cut-group-item"><strong>合计</strong><strong>${q.total.toFixed(2)} 元</strong></div>`;
     }
     function setMaterialPrice(material, value) {
@@ -5910,6 +5956,7 @@
           metersPerPixel: state.scale.metersPerPixel,
           points: state.scale.points,
           lengthM: state.scale.lengthM,
+          lengthUnit: currentScaleUnit(),
           needsCalibration: state.scale.needsCalibration,
           source: state.scale.source
         },
@@ -5936,6 +5983,7 @@
         },
         takeoff: buildTakeoffSummary(),
         quote: buildQuote(),
+        pricing: { mode: quoteState.mode, unitPrices: { ...quoteState.unitPrices } },
         warnings: validation.errors.concat(validation.warnings)
       };
     }
@@ -5954,7 +6002,8 @@
 	        gridRotation: state.gridRotation,
 	        tileSize: state.tileSize,
 	        autoSnap: state.autoSnap,
-	        showMagnifier: state.showMagnifier
+	        showMagnifier: state.showMagnifier,
+	        pricing: { mode: quoteState.mode, unitPrices: { ...quoteState.unitPrices } }
 	      };
 	      try {
 	        localStorage.setItem('gantang_project_draft', JSON.stringify(draft));
@@ -6270,7 +6319,7 @@
           return pdf.getPage(pageNum).then((page) => {
             const base = page.getViewport({ scale: 1 });
             const fit = Math.min(MAX_DECODE_DIMENSION / base.width, MAX_DECODE_DIMENSION / base.height, 4);
-            const viewport = page.getViewport({ scale: Math.max(0.2, fit) });
+            const viewport = page.getViewport({ scale: Math.max(0.01, fit) });
             const canvas = document.createElement('canvas');
             canvas.width = Math.round(viewport.width);
             canvas.height = Math.round(viewport.height);
@@ -6307,8 +6356,8 @@
         const vbH = vb ? parseFloat(vb[4]) : 0;
         if (!(vbW > 0) || !(vbH > 0)) { alert('DXF 没有可识别的图形范围。'); return; }
         const fit = Math.min(MAX_DECODE_DIMENSION / vbW, MAX_DECODE_DIMENSION / vbH, 8);
-        const cw = Math.max(1, Math.round(vbW * Math.max(0.1, fit)));
-        const ch = Math.max(1, Math.round(vbH * Math.max(0.1, fit)));
+        const cw = Math.max(1, Math.round(vbW * Math.max(0.001, fit)));
+        const ch = Math.max(1, Math.round(vbH * Math.max(0.001, fit)));
         let sizedSvg = svg.replace('<svg ', `<svg width="${cw}" height="${ch}" `);
         if (!/xmlns=/.test(sizedSvg)) sizedSvg = sizedSvg.replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" ');
         const img = new Image();
@@ -6384,6 +6433,7 @@
         state.scale.metersPerPixel = loaded.scale.metersPerPixel || state.scale.metersPerPixel;
         state.scale.points = loaded.scale.points || [];
         state.scale.lengthM = loaded.scale.lengthM || 9.70;
+        state.scale.lengthUnit = loaded.scale.lengthUnit || 'm';
         state.scale.needsCalibration = loaded.scale.needsCalibration === false ? false : true;
         state.scale.source = loaded.scale.source || 'loaded-project';
       } else if (loaded.calibration) {
@@ -6391,6 +6441,13 @@
         setScaleCalibrationState(false, 'legacy-calibration');
       }
       normalizeScaleState();
+
+      // 恢复报价输入（单价 + 计价方式），避免项目/JSON 往返丢失。
+      if (loaded.pricing && typeof loaded.pricing === 'object') {
+        quoteState.mode = loaded.pricing.mode === 'per-area' ? 'per-area' : 'per-tile';
+        quoteState.unitPrices = (loaded.pricing.unitPrices && typeof loaded.pricing.unitPrices === 'object')
+          ? { ...loaded.pricing.unitPrices } : {};
+      }
 
       if (loaded.grid) {
         state.gridOrigin = loaded.grid.origin_px || state.gridOrigin;
