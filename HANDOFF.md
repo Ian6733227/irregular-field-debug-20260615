@@ -76,7 +76,7 @@
 
 1. **识别内核换路线**：放弃纯栅格，做 **DXF 块(INSERT)解析**识别柱/树（解析时已有 dxf 库，块数据可取）；这是真实图唯一可靠路径。
 2. **DXF 导入健壮性**：① 用 ODA 出干净 DXF；② 抑制 dxf 库 `console.error` 噪声（导入时临时包 `console.error`，免触发 console=0 门禁）；③ 大文件解析放 Web Worker，避免主线程卡死/抛错。
-3. **P2 收尾**：版本徽标仍写死 `v20260616-1508`（HTML 内 `本地离线版 v...`，未改，因当时用户未要）；`activeProjectId` 会话恢复（故意未做，见复核备注）。
+3. **P2 收尾**：`activeProjectId` 会话恢复（故意未做，见复核备注）；合并前按真实样本补一次召回抽检和人评终审。
 4. **真机/真宿主验证**：iPad Safari 触屏；宿主消费 `export-summary`/`get-project`/`gantang-quote.v1` 出报价。
 5. **发布前**：PR #1 已开；按本轮 reviewer 意见补齐后，人评终审通过再合并。
 
