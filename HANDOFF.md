@@ -13,7 +13,7 @@
 
 - 工作副本（本机）：`/Users/yy/Claude/irregular-field-debug-20260615`
 - 远程：GitHub `Ian6733227/irregular-field-debug-20260615`（base commit `66542fc`）
-- 分支：`fix/batch1-p0-p1`（**所有改动在此分支，未 push、未 PR**）
+- 分支：`fix/batch1-p0-p1`（已 push origin；**PR #1 已开，待终审，勿直接合并**：https://github.com/Ian6733227/irregular-field-debug-20260615/pull/1）
 - 主文件：`gantang-grid-designer/gantang-grid-designer.html`（约 7061 行，单文件 + 内联 JS）
 - 版本：`manifest.version=1.2.2-dwg-guidance` / `featureVersion=v20260617-batch2-rev2`
 - 补丁（可 `git apply` 到真实仓库根目录；在 `/Users/yy/Claude/`）：
@@ -70,7 +70,7 @@
 - 真实宿主 BOM/报价系统未接入（设计器侧只出 `gantang-quote.v1` 数据）。
 - 11MB 级 DXF 在浏览器内解析慢/会抛错；复杂 DXF 最慢见 ~20s。
 - 拼花（单区多材料图案）未做。
-- 未经人评终审、未 push、未上线。
+- PR #1 已开、待终审、未合并、未上线。
 
 ## 7. 建议下一步（按优先级）
 
@@ -78,7 +78,7 @@
 2. **DXF 导入健壮性**：① 用 ODA 出干净 DXF；② 抑制 dxf 库 `console.error` 噪声（导入时临时包 `console.error`，免触发 console=0 门禁）；③ 大文件解析放 Web Worker，避免主线程卡死/抛错。
 3. **P2 收尾**：版本徽标仍写死 `v20260616-1508`（HTML 内 `本地离线版 v...`，未改，因当时用户未要）；`activeProjectId` 会话恢复（故意未做，见复核备注）。
 4. **真机/真宿主验证**：iPad Safari 触屏；宿主消费 `export-summary`/`get-project`/`gantang-quote.v1` 出报价。
-5. **发布前**：独立 reviewer 终审 → push 分支 → PR。
+5. **发布前**：PR #1 已开；按本轮 reviewer 意见补齐后，人评终审通过再合并。
 
 ## 8. 改动纪律（沿用）
 

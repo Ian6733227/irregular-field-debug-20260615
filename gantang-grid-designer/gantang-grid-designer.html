@@ -1289,7 +1289,7 @@
     <header class="topbar">
       <div class="brand">
         <h1>异形场地导入</h1>
-        <span class="badge">本地离线版 v20260616-1508</span>
+        <span class="badge" id="appVersionBadge">本地离线版</span>
       </div>
       <div class="global-actions">
         <div class="action-group">
@@ -1737,6 +1737,22 @@
       </tbody>
     </table>
 
+    <h2>5. 柱/树候选审计</h2>
+    <table class="print-table" id="ptObstacleTable">
+      <thead>
+        <tr>
+          <th>已识别 (候选)</th>
+          <th>已确认 (转扣除区)</th>
+          <th>已忽略</th>
+          <th>待确认</th>
+        </tr>
+      </thead>
+      <tbody id="ptObstacleBody">
+        <tr><td colspan="4">未识别</td></tr>
+      </tbody>
+    </table>
+    <p id="ptObstacleNote" style="display:none; color:#9a6700; font-weight:700;"></p>
+
     <div class="print-canvases">
       <div class="print-canvas-wrapper">
         <img id="printImgPlan" src="" alt="设计边界图">
@@ -1775,6 +1791,7 @@
     let currentImageSource = defaultImagePath;
     const MAX_HISTORY_ENTRIES = 250;
     const DESIGNER_BRIDGE_VERSION = 'gantang-grid-designer.bridge.v1';
+    const APP_VERSION = 'v20260617-batch2-rev3'; // 单一版本源：徽标 + obstacleDetection 版本字段（与 manifest.featureVersion 保持一致）
     const DESIGNER_BRIDGE_SOURCE = 'gantang-grid-designer';
     const DESIGNER_HOST_SOURCE = 'gantang-grid-host';
     const DESIGNER_LOCAL_FILE_TARGET_ORIGIN = '*';
@@ -1990,7 +2007,7 @@
       // Obstacle detection candidates stay outside regions until reviewed.
       obstacleDetection: {
         schema: 'gantang-obstacle-detection.v1',
-        version: 'v20260616-1508',
+        version: APP_VERSION,
         showOverlay: true,
         selectedCandidateId: null,
         settings: {
@@ -2095,6 +2112,7 @@
     let offscreenCtx = null;
 
     syncDebugVisibility();
+    (() => { const vb = document.getElementById('appVersionBadge'); if (vb) vb.textContent = '本地离线版 ' + APP_VERSION; })();
 
     image.onload = () => {
       initOffscreen();
@@ -2173,7 +2191,7 @@
     function defaultObstacleDetectionState() {
       return {
         schema: 'gantang-obstacle-detection.v1',
-        version: 'v20260616-1508',
+        version: APP_VERSION,
         showOverlay: true,
         selectedCandidateId: null,
         settings: {
@@ -5976,7 +5994,7 @@
         })),
         obstacleDetection: {
           schema: state.obstacleDetection.schema || 'gantang-obstacle-detection.v1',
-          version: state.obstacleDetection.version || 'v20260616-1508',
+          version: state.obstacleDetection.version || APP_VERSION,
           summary: obstacleDetectionSummary(),
           runs: state.obstacleDetection.runs,
           candidates: state.obstacleDetection.candidates
@@ -6558,6 +6576,17 @@
       Object.keys(groups).forEach(key => {
         csv += `${csvCell(key)},${groups[key].count},${csvCell(groups[key].coords.join(' '))}\n`;
       });
+      csv += '\n';
+
+      // 5. 柱/树候选审计：把识别/确认/忽略计数写进量单，让"是否扣除障碍"可追溯。
+      const obsAudit = obstacleDetectionSummary();
+      csv += '5. 柱/树候选审计\n';
+      csv += '已识别(候选),已确认(转扣除区),已忽略,待确认\n';
+      csv += `${obsAudit.total},${obsAudit.confirmed},${obsAudit.ignored},${obsAudit.pending}\n`;
+      if (obsAudit.total > 0 && obsAudit.confirmed === 0 && obsAudit.ignored > 0) {
+        csv += `${csvCell('注意：识别到柱/树候选但全部忽略、未做障碍扣减，请业务确认现场确实无需扣除')}\n`;
+      }
+      csv += '\n';
 
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
       const a = document.createElement('a');
@@ -6687,6 +6716,19 @@
       }
 
 	      document.getElementById('printMeta').textContent = `生成时间: ${new Date().toLocaleString()} | 项目底图: ${currentImagePath}`;
+
+      // 柱/树候选审计
+      const obsAudit = obstacleDetectionSummary();
+      document.getElementById('ptObstacleBody').innerHTML =
+        `<tr><td>${obsAudit.total}</td><td>${obsAudit.confirmed}</td><td>${obsAudit.ignored}</td><td>${obsAudit.pending}</td></tr>`;
+      const obsNote = document.getElementById('ptObstacleNote');
+      if (obsAudit.total > 0 && obsAudit.confirmed === 0 && obsAudit.ignored > 0) {
+        obsNote.textContent = '注意：识别到柱/树候选但全部忽略、未做障碍扣减，请业务确认现场确实无需扣除。';
+        obsNote.style.display = 'block';
+      } else {
+        obsNote.textContent = '';
+        obsNote.style.display = 'none';
+      }
 
       // 3. Trigger print dialog
       document.getElementById('printReport').dataset.printReady = 'true';

@@ -1,0 +1,4 @@
+# 第三方 vendor 库：免 whitespace 检查、标记为 vendored（GitHub diff 折叠）
+gantang-grid-designer/vendor/** -whitespace linguist-vendored
+# 备份快照不计入语言统计
+_backup/** linguist-vendored

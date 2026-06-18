@@ -231,6 +231,15 @@
 - 据此改为引导式提示：用户选择 `.dwg` 时（`accept` 已加入 `.dwg`，否则被文件框过滤掉看不到提示）弹出明确指引——"请先转成 **DXF 或 PDF** 再导入"，并给 DWG→DXF（DWG TrueView / ODA File Converter，免费）与 DWG→PDF（CAD 打印/输出 PDF）两条路径。DWG 不会被误当底图。
 - 仅改 `gantang-grid-designer.html`（提示文案 + accept），浏览器实测：`.dwg` 可选、提示含 DXF 与 PDF、不被导入；`npm test` 通过、console error=0。
 
+## 2026-06-17 PR 复审跟进（v20260617-batch2-rev3 / 1.2.3-review-followup）
+
+针对 PR #1 reviewer 意见修复：
+- **版本一致性**：新增单一版本源 `APP_VERSION`，页面徽标改由 JS 注入、`obstacleDetection.version`（默认/导出）统一引用 `APP_VERSION`；`manifest.featureVersion` 与之对齐为 `v20260617-batch2-rev3`。不再出现徽标/导出 JSON 与 manifest 版本不一致。
+- **量单柱/树审计**：`exportCSV()` 增「5. 柱/树候选审计」段、`printReport()` 增「5. 柱/树候选审计」表，输出 已识别/已确认/已忽略/待确认，全忽略时带显式注意行。补齐之前只在门禁/JSON 层有、CSV/打印缺失的审计。
+- **HANDOFF.md** 状态更新为「PR #1 已开、待终审、勿合并」。
+- **PR 体积/检查**：`_backup` 不再随本分支新增（移除新增的 before-batch1 快照，PR 内 `_backup` 净 diff 为空，原 3 份保留待定）；新增 `.gitattributes` 将 `vendor/**` 标记 `-whitespace linguist-vendored`，`git diff --check` 不再因 vendor 尾空格失败。
+- 验证：`npm test` 通过；浏览器实测徽标=APP_VERSION、导出 JSON `obstacleDetection.version`=APP_VERSION、CSV/打印含审计段、console error=0。
+
 ## SHA-256
 
 ```text
@@ -238,9 +247,9 @@
 712f370cc9796acfb494b641a8817f104627b41cb0243b59469c15f8384ff3e7  ./package.json
 ca441674f369bc2fd6b8503e4274b2111e3155da6d21b1af80c859d113b1648b  ./scripts/check-inline.js
 852649512ca544ab9baeeda2d2305f87368ff2484096df20fcd63e5898256cca  ./index.html
-60eb3b10d9c69ff9e534e846756cc2f6313c6404739f898ab04c1bcbfb7be008  ./gantang-grid-designer/gantang-grid-designer.html
+d7a544bbfbdd374efe73761f2650a30431f3e7abd8d62a6cea2f5592731dfa3f  ./gantang-grid-designer/gantang-grid-designer.html
 2c3dff1c92da22afa14ec9fdd30cb6e98f2eb1ec3fe73878e06ffbcb9d6340b5  ./gantang-grid-designer/gantang-grid-designer-integration.md
-2602034b4cb3757df3c56117dbcdaea1a02c1d89f5505b614b6281e42af20aa4  ./gantang-grid-designer/manifest.json
+5947a654e3ac232cf84eca27fb77a3ce1d9634aee153e940b38be22eaf3de522  ./gantang-grid-designer/manifest.json
 b4a8fc495f55767c9a9d28f4b15fb337e235975ea26f9cebda330a6d44dfc6ba  ./gantang-grid-designer/integration-host-demo.html
 1d2ab502040cf7ae86348b0aeeb6cd6f3b30b4d49950e14f6b2592d5bc84e6e8  ./gantang-grid-designer/gantang-page08-plan.png
 5cfc1a057c26f59ab191821787ff5e01848b73cc40e954e2b061a04dfa4bb86f  ./gantang-grid-designer/import-batch/cad-screenshot-06.png
