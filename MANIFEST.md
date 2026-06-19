@@ -240,16 +240,46 @@
 - **PR 体积/检查**：`_backup` 不再随本分支新增（移除新增的 before-batch1 快照，PR 内 `_backup` 净 diff 为空，原 3 份保留待定）；新增 `.gitattributes` 将 `vendor/**` 标记 `-whitespace linguist-vendored`，`git diff --check` 不再因 vendor 尾空格失败。
 - 验证：`npm test` 通过；浏览器实测徽标=APP_VERSION、导出 JSON `obstacleDetection.version`=APP_VERSION、CSV/打印含审计段、console error=0。
 
+## 2026-06-19 形状扣除交互合并（v20260619-hole-shape-merge / 1.2.4-hole-shape-merge）
+
+- 定位：本 PR 包内 `gantang-grid-designer/gantang-grid-designer.html` 作为后续异形场地模块唯一主线；复杂拼接设计里的旧异形交互只作为参考来源，后续先更新本模块，再集成到其他模块。
+- 回退备份：
+  - `_backup/gantang-grid-designer-v20260619-2050-before-hole-shape-merge.html`
+  - `_backup/manifest-v20260619-2050-before-hole-shape-merge.json`
+  - `_backup/MANIFEST-v20260619-2050-before-hole-shape-merge.md`
+- 修改文件：
+  - `gantang-grid-designer/gantang-grid-designer.html`
+  - `gantang-grid-designer/manifest.json`
+  - `package.json`
+  - `MANIFEST.md`
+- 修改内容：
+  - 新增“矩形扣除 / 圆形扣除”拖拽工具，快速创建闭合 `type="hole"` 扣除区。
+  - 数据模型新增 `shapeKind=rect|circle|null`；底层仍输出标准 `points_px`，不破坏现有算量、门禁、JSON 和宿主接口。
+  - 圆形扣除用 48 点多边形近似参与算量，UI 隐藏顶点手柄并阻止右键/长按删点，避免破坏圆形语义。
+  - 矩形扣除一旦被手工拖动顶点、追加点或清空点，会自动降级为普通多边形，避免导出错误几何语义。
+  - 导入项目时校验 `shapeKind` 与点数自洽性：`rect` 必须 4 点、`circle` 必须 48 点，否则降级为普通多边形。
+  - CSV、打印报告和一键 PDF 增加扣除区几何信息；JSON 导出/导入 round-trip 保留 `shapeKind`。
+  - 状态条和 Escape 取消逻辑同步形状扣除工具状态。
+- 验证命令与结果：
+  - `npm test`：内联脚本语法 + `manifest.json` 解析通过。
+  - `git diff --check`：通过。
+  - Playwright 真实画布拖拽：矩形扣除生成 `type=hole/shapeKind=rect/4点`；圆形扣除生成 `type=hole/shapeKind=circle/48点`；导出 JSON 保留 `shapeKind`；console/pageerror=0。
+  - Playwright ready 场景报表：打印区域表包含“矩形”“圆形”；CSV 下载包含 `类型,几何,顶点数量` 且扣除区行分别为矩形 4 点、圆形 48 点；一键 PDF 函数执行成功且 jsPDF 已加载；console/pageerror=0。
+  - DS 复核后补测：篡改 JSON 导入时，`shapeKind=rect` 但非 4 点、`shapeKind=circle` 但非 48 点均降级并在再次导出时为 `null`；合法 4 点矩形保持 `rect`。
+- 未验证边界：
+  - 尚未把本 canonical 模块反向集成到复杂拼接设计、iOS 或其他宿主。
+  - 真实 iPad/Safari 触摸拖拽仍需人工确认。
+
 ## SHA-256
 
 ```text
 42f561d59180d6e333d2659aa3ed6e75fd03a97a01f4c29ca354d185dc1f6f7b  ./README.md
-712f370cc9796acfb494b641a8817f104627b41cb0243b59469c15f8384ff3e7  ./package.json
+d44acaea2fb972808734bd15bd80fabc03c19b44c061387071672c51352edf82  ./package.json
 ca441674f369bc2fd6b8503e4274b2111e3155da6d21b1af80c859d113b1648b  ./scripts/check-inline.js
 852649512ca544ab9baeeda2d2305f87368ff2484096df20fcd63e5898256cca  ./index.html
-d7a544bbfbdd374efe73761f2650a30431f3e7abd8d62a6cea2f5592731dfa3f  ./gantang-grid-designer/gantang-grid-designer.html
+021a360621192377cba06766203da7d439ac845dc603ee46c79577ad2a28334b  ./gantang-grid-designer/gantang-grid-designer.html
 2c3dff1c92da22afa14ec9fdd30cb6e98f2eb1ec3fe73878e06ffbcb9d6340b5  ./gantang-grid-designer/gantang-grid-designer-integration.md
-5947a654e3ac232cf84eca27fb77a3ce1d9634aee153e940b38be22eaf3de522  ./gantang-grid-designer/manifest.json
+917c1267a5ab5725d7e61346a90df1aace4509eeb45f79ce0da96b0e069e6b5f  ./gantang-grid-designer/manifest.json
 b4a8fc495f55767c9a9d28f4b15fb337e235975ea26f9cebda330a6d44dfc6ba  ./gantang-grid-designer/integration-host-demo.html
 1d2ab502040cf7ae86348b0aeeb6cd6f3b30b4d49950e14f6b2592d5bc84e6e8  ./gantang-grid-designer/gantang-page08-plan.png
 5cfc1a057c26f59ab191821787ff5e01848b73cc40e954e2b061a04dfa4bb86f  ./gantang-grid-designer/import-batch/cad-screenshot-06.png

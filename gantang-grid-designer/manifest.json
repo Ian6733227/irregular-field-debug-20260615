@@ -1,7 +1,7 @@
 {
   "name": "gantang-grid-designer-integration",
-  "version": "1.2.3-review-followup",
-  "featureVersion": "v20260617-batch2-rev3",
+  "version": "1.2.4-hole-shape-merge",
+  "featureVersion": "v20260619-hole-shape-merge",
   "bridgeVersion": "gantang-grid-designer.bridge.v1",
   "entry": "gantang-grid-designer.html",
   "hostDemo": "integration-host-demo.html",

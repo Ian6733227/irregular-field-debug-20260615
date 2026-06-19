@@ -452,6 +452,12 @@
       background: #fff0ee;
     }
 
+    button.shape-tool-active {
+      color: #ffffff;
+      background: #7c3aed;
+      border-color: #6d28d9;
+    }
+
     button:disabled {
       opacity: 0.5;
       cursor: not-allowed;
@@ -1412,6 +1418,10 @@
               <button onclick="addNewRegion('hole')" class="primary" style="flex: 1;">新增扣除区域</button>
             </div>
             <div class="field-row region-action-row">
+              <button id="rectHoleToolBtn" onclick="addPresetHoleShape('rect')" class="primary" style="flex: 1;" title="拖拽一个矩形扣除区">矩形扣除</button>
+              <button id="circleHoleToolBtn" onclick="addPresetHoleShape('circle')" class="primary" style="flex: 1;" title="拖拽一个圆形扣除区">圆形扣除</button>
+            </div>
+            <div class="field-row region-action-row">
               <button onclick="closeActiveRegion()" class="success" style="flex: 1;">闭合当前区域</button>
               <button onclick="resnapActiveRegion()" class="primary" style="flex: 1;">重吸附当前区域</button>
             </div>
@@ -1727,12 +1737,13 @@
           <th>区域名称</th>
           <th>材料属性</th>
           <th>类型</th>
+          <th>几何</th>
           <th>边界顶点数</th>
         </tr>
       </thead>
       <tbody id="ptRegionsBody">
         <tr>
-          <td colspan="5">无定义区域</td>
+          <td colspan="6">无定义区域</td>
         </tr>
       </tbody>
     </table>
@@ -1791,7 +1802,7 @@
     let currentImageSource = defaultImagePath;
     const MAX_HISTORY_ENTRIES = 250;
     const DESIGNER_BRIDGE_VERSION = 'gantang-grid-designer.bridge.v1';
-    const APP_VERSION = 'v20260617-batch2-rev3'; // 单一版本源：徽标 + obstacleDetection 版本字段（与 manifest.featureVersion 保持一致）
+    const APP_VERSION = 'v20260619-hole-shape-merge'; // 单一版本源：徽标 + obstacleDetection 版本字段（与 manifest.featureVersion 保持一致）
     const DESIGNER_BRIDGE_SOURCE = 'gantang-grid-designer';
     const DESIGNER_HOST_SOURCE = 'gantang-grid-host';
     const DESIGNER_LOCAL_FILE_TARGET_ORIGIN = '*';
@@ -2027,6 +2038,8 @@
 
       // Interactive drag target
       dragTarget: null, // { type: 'point', rIdx, pIdx } or { type: 'origin' } or { type: 'scale', idx }
+      holeShapeTool: null,
+      holeShapeDraft: null,
 
       // Snapping
       autoSnap: true,
@@ -3281,12 +3294,13 @@
         const pointsCount = r.points.length;
         const name = escapeHtml(r.name || ('区域 ' + (idx + 1)));
         const material = escapeHtml(r.material);
+        const geometry = r.type === 'hole' ? `${shapeKindLabel(regionShapeKind(r))}扣除` : '多边形';
         const closed = r.closed ? '(闭合)' : '';
         return `
           <div class="region-item ${activeClass}" onclick="selectRegion(${idx})">
             <div class="region-info">
               <span class="region-name">${icon} ${name}</span>
-              <span class="region-meta">${material} | ${pointsCount}点 ${closed}</span>
+              <span class="region-meta">${material} | ${geometry} | ${pointsCount}点 ${closed}</span>
             </div>
             <button class="region-delete-btn" onclick="event.stopPropagation(); deleteRegion(${idx})">×</button>
           </div>
@@ -4405,7 +4419,7 @@
 
 	      if (event.button === 2) return; // Right click handles elsewhere
       // 触屏/笔：长按删除点（替代桌面右键删除）。
-      if (event.pointerType === 'touch' || event.pointerType === 'pen') {
+      if ((event.pointerType === 'touch' || event.pointerType === 'pen') && !(state.mode === 'region' && state.holeShapeTool)) {
         scheduleTouchLongPress(screenPt);
       }
       try { els.planCanvas.setPointerCapture(event.pointerId); } catch (err) {}
@@ -4419,6 +4433,19 @@
 
       const imgPt = screenToImage(screenPt);
       const snappedPt = snapToDarkPixel(imgPt);
+
+      if (state.mode === 'region' && state.holeShapeTool) {
+        const start = clampImagePoint(imgPt);
+        state.holeShapeDraft = {
+          shape: state.holeShapeTool,
+          start,
+          current: start
+        };
+        state.dragTarget = null;
+        updatePlanCanvasCursor();
+        renderPlan();
+        return;
+      }
 
       // 1. Drag detection
       // A. Check grid origin in grid mode
@@ -4451,11 +4478,14 @@
             return;
           }
         }
-        for (let i = 0; i < activeRegion.points.length; i++) {
-          const pScreen = imageToScreen(activeRegion.points[i]);
-          if (Math.hypot(screenPt.x - pScreen.x, screenPt.y - pScreen.y) < 8) {
-            state.dragTarget = { type: 'point', rIdx: state.activeRegionIndex, pIdx: i };
-            return;
+        if (regionShapeKind(activeRegion) !== 'circle') {
+          for (let i = 0; i < activeRegion.points.length; i++) {
+            const pScreen = imageToScreen(activeRegion.points[i]);
+            if (Math.hypot(screenPt.x - pScreen.x, screenPt.y - pScreen.y) < 8) {
+              if (activeRegion.shapeKind) activeRegion.shapeKind = null;
+              state.dragTarget = { type: 'point', rIdx: state.activeRegionIndex, pIdx: i };
+              return;
+            }
           }
         }
       }
@@ -4497,6 +4527,7 @@
         if (activeRegion.closed) {
           activeRegion.closed = false;
         }
+        if (activeRegion.shapeKind) activeRegion.shapeKind = null;
         activeRegion.points.push({ x: round(snappedPt.x, 2), y: round(snappedPt.y, 2) });
         saveHistory();
         updateActiveRegionPanel();
@@ -4526,6 +4557,13 @@
       const snappedPt = snapToDarkPixel(imgPt);
       const hadSnappedHover = state.snappedHoverPos.snapped;
       state.snappedHoverPos = snappedPt;
+
+      if (state.holeShapeDraft) {
+        state.snappedHoverPos = { ...imgPt, snapped: false };
+        state.holeShapeDraft.current = clampImagePoint(imgPt);
+        renderPlan();
+        return;
+      }
 
       if (state.dragTarget) {
         const tgt = state.dragTarget;
@@ -4564,6 +4602,10 @@
 	      state.dragging = false;
 	      state.lastMouse = null;
 	      updatePlanCanvasCursor();
+        if (state.holeShapeDraft) {
+          finishHoleShapeDraft();
+          return;
+        }
 	      if (state.dragTarget) {
 	        const targetType = state.dragTarget.type;
 	        if (targetType === 'scale') {
@@ -4600,6 +4642,7 @@
 	      if (!tgt || tgt.type !== 'point') return;
 	      const region = state.regions[tgt.rIdx];
 	      if (!region || !Array.isArray(region.points) || tgt.pIdx >= region.points.length) return;
+	      if (regionShapeKind(region) === 'circle') return;
 	      region.points.splice(tgt.pIdx, 1);
 	      state.dragTarget = null;
 	      saveHistory();
@@ -4609,9 +4652,10 @@
 
     els.planCanvas.addEventListener('contextmenu', (event) => {
       event.preventDefault();
-      if (state.mode !== 'region') return;
-      const activeRegion = state.regions[state.activeRegionIndex];
-      if (!activeRegion || !activeRegion.points.length) return;
+	      if (state.mode !== 'region') return;
+	      const activeRegion = state.regions[state.activeRegionIndex];
+	      if (!activeRegion || !activeRegion.points.length) return;
+	      if (regionShapeKind(activeRegion) === 'circle') return;
 
       const rect = els.planCanvas.getBoundingClientRect();
       const screenPt = { x: event.clientX - rect.left, y: event.clientY - rect.top };
@@ -4652,6 +4696,10 @@
 	      state.mode = mode;
 	      state.dragging = false;
 	      state.lastMouse = null;
+        if (mode !== 'region') {
+          state.holeShapeTool = null;
+          state.holeShapeDraft = null;
+        }
 
       // Hide all control blocks
       ['region', 'calibrate', 'grid', 'pan'].forEach(key => {
@@ -4678,6 +4726,7 @@
 	        document.getElementById('tab-grid').classList.add('active');
 	      }
 
+        updateHoleShapeToolButtons();
 	      updatePlanCanvasCursor();
 	      renderAll();
 	    }
@@ -4685,6 +4734,8 @@
 	    function updatePlanCanvasCursor() {
 	      if (state.dragging) {
 	        els.planCanvas.style.cursor = 'grabbing';
+        } else if (state.mode === 'region' && state.holeShapeTool) {
+          els.planCanvas.style.cursor = 'crosshair';
 	      } else if (state.mode === 'pan') {
 	        els.planCanvas.style.cursor = 'grab';
 	      } else if (state.mode === 'select-edge') {
@@ -4720,6 +4771,138 @@
       updateActiveRegionPanel();
       renderAll();
       emitHostChange('region-added');
+    }
+
+    function clampImagePoint(point) {
+      if (!image.naturalWidth || !image.naturalHeight) return { x: round(point.x, 2), y: round(point.y, 2) };
+      return {
+        x: round(Math.max(0, Math.min(image.naturalWidth, point.x)), 2),
+        y: round(Math.max(0, Math.min(image.naturalHeight, point.y)), 2)
+      };
+    }
+
+    function normalizeHoleShapeKind(kind) {
+      return kind === 'circle' || kind === 'rect' ? kind : null;
+    }
+
+    function validShapeKindForPoints(kind, type, points) {
+      const normalized = normalizeHoleShapeKind(kind);
+      const pointCount = Array.isArray(points) ? points.length : 0;
+      if (type !== 'hole' || !normalized) return null;
+      if (normalized === 'rect' && pointCount !== 4) return null;
+      if (normalized === 'circle' && pointCount !== 48) return null;
+      return normalized;
+    }
+
+    function regionShapeKind(region) {
+      if (!region) return null;
+      return validShapeKindForPoints(region.shapeKind, region.type, region.points);
+    }
+
+    function shapeKindLabel(kind) {
+      if (kind === 'circle') return '圆形';
+      if (kind === 'rect') return '矩形';
+      return '多边形';
+    }
+
+    function addPresetHoleShape(shape) {
+      const kind = normalizeHoleShapeKind(shape);
+      if (!kind) return;
+      state.holeShapeTool = state.holeShapeTool === kind ? null : kind;
+      state.holeShapeDraft = null;
+      setMode('region');
+      updateHoleShapeToolButtons();
+      updatePlanCanvasCursor();
+      renderPlan();
+    }
+
+    function updateHoleShapeToolButtons() {
+      const rectBtn = document.getElementById('rectHoleToolBtn');
+      const circleBtn = document.getElementById('circleHoleToolBtn');
+      if (rectBtn) rectBtn.classList.toggle('shape-tool-active', state.holeShapeTool === 'rect');
+      if (circleBtn) circleBtn.classList.toggle('shape-tool-active', state.holeShapeTool === 'circle');
+    }
+
+    function cancelHoleShapeTool() {
+      if (!state.holeShapeTool && !state.holeShapeDraft) return false;
+      state.holeShapeTool = null;
+      state.holeShapeDraft = null;
+      updateHoleShapeToolButtons();
+      updatePlanCanvasCursor();
+      renderPlan();
+      return true;
+    }
+
+    function buildHoleShapePoints(shape, start, end) {
+      const x1 = start.x;
+      const y1 = start.y;
+      const x2 = end.x;
+      const y2 = end.y;
+      const minX = Math.min(x1, x2);
+      const maxX = Math.max(x1, x2);
+      const minY = Math.min(y1, y2);
+      const maxY = Math.max(y1, y2);
+      if (maxX - minX < 3 || maxY - minY < 3) return [];
+
+      if (shape === 'circle') {
+        const cx = (x1 + x2) / 2;
+        const cy = (y1 + y2) / 2;
+        const rx = Math.abs(x2 - x1) / 2;
+        const ry = Math.abs(y2 - y1) / 2;
+        const segments = 48;
+        const points = [];
+        for (let i = 0; i < segments; i++) {
+          const theta = (Math.PI * 2 * i) / segments;
+          points.push(clampImagePoint({
+            x: cx + Math.cos(theta) * rx,
+            y: cy + Math.sin(theta) * ry
+          }));
+        }
+        return points;
+      }
+
+      return [
+        clampImagePoint({ x: minX, y: minY }),
+        clampImagePoint({ x: maxX, y: minY }),
+        clampImagePoint({ x: maxX, y: maxY }),
+        clampImagePoint({ x: minX, y: maxY })
+      ];
+    }
+
+    function addHoleShapeRegion(shape, start, end) {
+      const kind = normalizeHoleShapeKind(shape);
+      const points = buildHoleShapePoints(kind, start, end);
+      if (!kind || points.length < 3) return false;
+      const id = nextRegionId();
+      state.regions.push({
+        id,
+        name: `${shapeKindLabel(kind)}扣除区域 ${state.regions.length + 1}`,
+        material: 'floating-floor',
+        type: 'hole',
+        shapeKind: kind,
+        points,
+        closed: true
+      });
+      state.activeRegionIndex = state.regions.length - 1;
+      return true;
+    }
+
+    function finishHoleShapeDraft() {
+      const draft = state.holeShapeDraft;
+      if (!draft) return false;
+      const ok = addHoleShapeRegion(draft.shape, draft.start, draft.current);
+      state.holeShapeDraft = null;
+      state.holeShapeTool = null;
+      updateHoleShapeToolButtons();
+      if (ok) {
+        saveHistory();
+        updateActiveRegionPanel();
+        renderAll();
+        emitHostChange('hole-shape-created');
+        return true;
+      }
+      renderPlan();
+      return false;
     }
 
     function closeActiveRegion() {
@@ -4767,6 +4950,7 @@
       if (r) {
         r.points = [];
         r.closed = false;
+        r.shapeKind = null;
         saveHistory();
         updateActiveRegionPanel();
         renderAll();
@@ -4892,6 +5076,7 @@
 	          els.regionType.value = 'hole';
 	        }
 	        r.type = els.regionType.value;
+          if (r.type !== 'hole') r.shapeKind = null;
 	        updateMaterialChips();
 	        renderRegionsList();
 	        renderGrid();
@@ -5044,6 +5229,28 @@
       return bestDist < 18 ? bestSegment : null;
     }
 
+    function drawHoleShapeDraftPreview() {
+      if (!state.holeShapeDraft) return;
+      const draft = state.holeShapeDraft;
+      const points = buildHoleShapePoints(draft.shape, draft.start, draft.current);
+      if (points.length < 3) return;
+      planCtx.save();
+      planCtx.beginPath();
+      points.forEach((point, idx) => {
+        const p = imageToScreen(point);
+        if (idx === 0) planCtx.moveTo(p.x, p.y);
+        else planCtx.lineTo(p.x, p.y);
+      });
+      planCtx.closePath();
+      planCtx.fillStyle = 'rgba(124,58,237,0.12)';
+      planCtx.fill();
+      planCtx.setLineDash([8, 5]);
+      planCtx.strokeStyle = '#7c3aed';
+      planCtx.lineWidth = 2;
+      planCtx.stroke();
+      planCtx.restore();
+    }
+
     // Rendering Plan Canvas
 	    function renderPlan() {
 	      resizeCanvas(els.planCanvas);
@@ -5128,39 +5335,42 @@
           planCtx.stroke();
         }
 
-        // Draw point handles
-        r.points.forEach((pt, pIdx) => {
-          const p = imageToScreen(pt);
-          planCtx.beginPath();
-          planCtx.arc(p.x, p.y, 4.5, 0, Math.PI * 2);
-          planCtx.fillStyle = '#ffffff';
-          planCtx.fill();
-          planCtx.strokeStyle = isHole ? '#dc2626' : '#0284c7';
-          planCtx.lineWidth = 1.5;
-          planCtx.stroke();
-
-          if (isActive && !r.closed && pIdx === 0 && r.points.length >= 3) {
+        // Draw point handles. Circle holes keep semantic handles hidden to avoid noisy 48-point editing.
+        if (regionShapeKind(r) !== 'circle') {
+          r.points.forEach((pt, pIdx) => {
+            const p = imageToScreen(pt);
             planCtx.beginPath();
-            planCtx.arc(p.x, p.y, 8, 0, Math.PI * 2);
-            planCtx.strokeStyle = '#22c55e';
-            planCtx.lineWidth = 2.5;
+            planCtx.arc(p.x, p.y, 4.5, 0, Math.PI * 2);
+            planCtx.fillStyle = '#ffffff';
+            planCtx.fill();
+            planCtx.strokeStyle = isHole ? '#dc2626' : '#0284c7';
+            planCtx.lineWidth = 1.5;
             planCtx.stroke();
-            planCtx.font = '700 11px Arial, sans-serif';
-            planCtx.fillStyle = '#22c55e';
-            planCtx.fillText('闭合', p.x + 10, p.y - 10);
-          }
 
-          // Highlight active handle
-          if (state.dragTarget && state.dragTarget.type === 'point' && state.dragTarget.rIdx === rIdx && state.dragTarget.pIdx === pIdx) {
-            planCtx.beginPath();
-            planCtx.arc(p.x, p.y, 7, 0, Math.PI * 2);
-            planCtx.strokeStyle = '#eab308';
-            planCtx.stroke();
-          }
-        });
+            if (isActive && !r.closed && pIdx === 0 && r.points.length >= 3) {
+              planCtx.beginPath();
+              planCtx.arc(p.x, p.y, 8, 0, Math.PI * 2);
+              planCtx.strokeStyle = '#22c55e';
+              planCtx.lineWidth = 2.5;
+              planCtx.stroke();
+              planCtx.font = '700 11px Arial, sans-serif';
+              planCtx.fillStyle = '#22c55e';
+              planCtx.fillText('闭合', p.x + 10, p.y - 10);
+            }
+
+            // Highlight active handle
+            if (state.dragTarget && state.dragTarget.type === 'point' && state.dragTarget.rIdx === rIdx && state.dragTarget.pIdx === pIdx) {
+              planCtx.beginPath();
+              planCtx.arc(p.x, p.y, 7, 0, Math.PI * 2);
+              planCtx.strokeStyle = '#eab308';
+              planCtx.stroke();
+            }
+          });
+        }
       });
 
       drawObstacleCandidateOverlay();
+      drawHoleShapeDraftPreview();
 
       // Draw Grid Origin Handle (十字准星)
       if (state.mode === 'grid') {
@@ -5246,6 +5456,10 @@
         `当前点数: ${activeReg ? activeReg.points.length : 0}`
       ];
       if (state.mode === 'region' && activeReg) {
+        if (state.holeShapeTool) {
+          compactDetails.push(`${shapeKindLabel(state.holeShapeTool)}扣除`);
+          fullDetails.push(`正在拖拽创建${shapeKindLabel(state.holeShapeTool)}扣除区`);
+        }
         if (activeReg.closed) {
           compactDetails.push('已闭合');
           fullDetails.push('当前区域已闭合');
@@ -5988,6 +6202,7 @@
           name: r.name,
           material: r.material,
           type: r.type,
+          shapeKind: regionShapeKind(r),
           sourceCandidateId: r.sourceCandidateId || null,
           closed: r.closed,
           points_px: r.points
@@ -6135,6 +6350,8 @@
 	      } else if (e.ctrlKey && (e.key === 'y' || (e.shiftKey && e.key === 'Z'))) {
 	        e.preventDefault();
 	        redo();
+	      } else if (e.key === 'Escape' && cancelHoleShapeTool()) {
+	        e.preventDefault();
 	      } else if (e.key === 'Escape' && document.body.classList.contains('plan-focus-active')) {
 	        e.preventDefault();
 	        exitPlanFullscreen();
@@ -6476,15 +6693,20 @@
       }
 
       if (loaded.regions) {
-        state.regions = loaded.regions.map(r => ({
-          id: r.id || 'region',
-          name: r.name || '导入区域',
-          material: r.material || 'floating-floor',
-          type: r.sourceCandidateId ? 'hole' : (r.type || 'tiling'),
-          sourceCandidateId: r.sourceCandidateId || null,
-          points: r.points_px || r.points || [],
-          closed: r.closed ?? true
-        }));
+        state.regions = loaded.regions.map(r => {
+          const points = r.points_px || r.points || [];
+          const type = r.sourceCandidateId ? 'hole' : (r.type || 'tiling');
+          return {
+            id: r.id || 'region',
+            name: r.name || '导入区域',
+            material: r.material || 'floating-floor',
+            type,
+            shapeKind: validShapeKindForPoints(r.shapeKind, type, points),
+            sourceCandidateId: r.sourceCandidateId || null,
+            points,
+            closed: r.closed ?? true
+          };
+        });
         state.activeRegionIndex = 0;
       }
       normalizeObstacleDetectionState(obstacleDetectionStateForLoadedProject(loaded));
@@ -6539,7 +6761,7 @@
       csv += '\n';
 
       csv += '3. 区域与孔洞列表\n';
-      csv += '区域ID,区域名称,材料,类型,顶点数量,面积(㎡)\n';
+      csv += '区域ID,区域名称,材料,类型,几何,顶点数量,面积(㎡)\n';
       state.regions.forEach(r => {
         const rArea = r.points.length >= 3 ? Math.abs(polygonArea(r.points.map(p => ({
           x: p.x * state.scale.metersPerPixel,
@@ -6550,6 +6772,7 @@
           csvCell(r.name),
           csvCell(r.material),
           csvCell(r.type === 'hole' ? '扣除区域' : '铺装区域'),
+          csvCell(r.type === 'hole' ? shapeKindLabel(regionShapeKind(r)) : '多边形'),
           r.points.length,
           rArea.toFixed(3)
         ].join(',') + '\n';
@@ -6682,6 +6905,7 @@
             <td>${escapeHtml(r.name)}</td>
             <td>${escapeHtml(r.material)}</td>
             <td>${r.type === 'hole' ? '扣除区域' : '铺装区域'}</td>
+            <td>${escapeHtml(r.type === 'hole' ? shapeKindLabel(regionShapeKind(r)) : '多边形')}</td>
             <td>${r.points.length}</td>
           </tr>
         `;
@@ -6773,6 +6997,13 @@
         `Waste area: ${wasteArea.toFixed(3)} m2   Waste rate: ${wastePct.toFixed(1)} %`
       ];
       lines.forEach((ln) => { doc.text(ln, margin, y); y += 14; });
+      const holeShapeCounts = state.regions.reduce((acc, region) => {
+        if (region.type !== 'hole') return acc;
+        const key = regionShapeKind(region) || 'polygon';
+        acc[key] = (acc[key] || 0) + 1;
+        return acc;
+      }, { rect: 0, circle: 0, polygon: 0 });
+      doc.text(`Hole geometry: rect ${holeShapeCounts.rect || 0}, circle ${holeShapeCounts.circle || 0}, polygon ${holeShapeCounts.polygon || 0}`, margin, y); y += 14;
       y += 6;
 
       const imgW = pageW - margin * 2;
