@@ -37,13 +37,9 @@
 
 ### 需要预处理
 
-PDF / Word 先转 PNG：
+PDF / Word 先转 PNG 再导入。主仓库提供过 `npm run prepare:plan-import` 这类批处理脚本（属主仓库构建环境，本独立调试包不含），也可用任意工具（如 DWG TrueView 打印 PDF、PDF 阅读器导出 PNG、或高分辨率截图）转成 PNG 后导入。
 
-```bash
-npm run prepare:plan-import -- --source "你的文件.pdf" --pdf-page 1 --out-dir gantang-grid-designer/import-batch
-```
-
-DWG/DXF 暂不走网页直接导入，先由外部 CAD 解析或截图成 PNG，再给本页面做手动框选、吸附、比例尺和排布。
+DWG/DXF 暂不走网页直接导入，先由外部 CAD（DWG TrueView / ODA File Converter 等免费工具）转 DXF/截图成 PNG，再给本页面做手动框选、吸附、比例尺和排布。
 
 ## postMessage 协议
 
@@ -477,12 +473,24 @@ window.GantangGridDesigner.loadProject(project);
 
 ## 验收命令
 
+本调试包内可直接运行（仅需 Node 与 Python3，无需安装依赖）：
+
 ```bash
-awk '/<script>/{flag=1; next} /<\\/script>/{flag=0} flag {print}' gantang-grid-designer/gantang-grid-designer.html | node --check -
-awk '/<script>/{flag=1; next} /<\\/script>/{flag=0} flag {print}' gantang-grid-designer/integration-host-demo.html | node --check -
+# 在调试包根目录执行：校验所有内联脚本语法 + manifest.json 解析
 npm test
-npm run package:grid-designer
+
+# 本地预览
+npm run serve   # 等价 python3 -m http.server 8767 --bind 127.0.0.1
 ```
+
+`npm test` 等价于逐个内联脚本做语法校验，亦可手动：
+
+```bash
+awk '/<script>/{flag=1; next} /<\/script>/{flag=0} flag {print}' gantang-grid-designer/gantang-grid-designer.html | node --check -
+awk '/<script>/{flag=1; next} /<\/script>/{flag=0} flag {print}' gantang-grid-designer/integration-host-demo.html | node --check -
+```
+
+> 注意：`npm run package:grid-designer`、`npm run prepare:plan-import` 属于**主仓库构建环境**的脚本，本独立调试包不包含、也不需要它们；请勿在本包内执行。
 
 已知限制：
 

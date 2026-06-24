@@ -1,0 +1,10 @@
+{
+  "name": "irregular-field-debug",
+  "version": "1.2.4-hole-shape-merge",
+  "private": true,
+  "description": "甘棠异形场地模块独立调试包：本包内可运行的语法/结构验收。",
+  "scripts": {
+    "test": "node scripts/check-inline.js",
+    "serve": "python3 -m http.server 8767 --bind 127.0.0.1"
+  }
+}

@@ -162,22 +162,136 @@
   - 真实 iPad/Safari 触摸操作仍未验证。
   - 真实宿主生产 BOM/报价系统仍未接入。
 
+## 2026-06-17 批次一 P0/P1 修复（Claude 实施，待复核）
+
+- 新版本标记：`v20260617-batch1` / `manifest.version=1.1.3-batch1-p0-p1`
+- 回退备份：
+  - `_backup/gantang-grid-designer-v20260617-before-batch1-p0-p1.html`
+- 修改文件：
+  - `gantang-grid-designer/gantang-grid-designer.html`
+  - `gantang-grid-designer/manifest.json`
+  - `gantang-grid-designer/gantang-grid-designer-integration.md`
+  - `package.json`（新增）、`scripts/check-inline.js`（新增）
+  - `MANIFEST.md`
+- 修改内容：
+  - **P0-1**：`DEBUG_MODE` 删除 `pathname.includes('irregular-field-debug')` 触发，仅认 `?debug=1|true`；交付目录名不再强制开启调试，恢复非 debug 路径对实时 JSON 与内置测试图纸的隐藏。
+  - **P0-2**：`validateProjectForDelivery()` 新增**非阻断** warning `obstacle_candidates_all_ignored`，仅当本项目扫描过（`runs` 非空）且 `confirmed===0` 且 `ignored>0` 时触发；交付门禁面板新增"已识别/已确认/已忽略/待确认"计数与 warning 展示。从未扫描的项目不报此 warning。
+  - **P0-3**：新增 `package.json` 与零依赖 `scripts/check-inline.js`，`npm test` 可在本包内校验所有内联脚本语法 + `manifest.json` 解析；同步修订 integration.md 验收/预处理段，标注 `package:grid-designer`/`prepare:plan-import` 属主仓库环境。
+  - **P1-1**：候选→扣除区校验从 center-only 升级——`candidateInsideClosedTiling` 要求候选多边形 ≥80% 顶点落在铺装区内；`candidateOverlapsExistingHole` 改用多边形实际相交（新增 `polygonsIntersect`），中心距仅作退化兜底。
+  - **P1-2**：新增 `trimIgnoredObstacleCandidates()`（`MAX_IGNORED_OBSTACLE_CANDIDATES=200`），每次扫描后裁剪 ignored 候选，防止反复扫描后无限堆积。
+  - **P1-3**：新增 `#printFallbackNotice`，未通过"打印 / PDF"按钮直接 Ctrl+P 时打印提示页而非空白页。
+  - **P1-5**：`image.crossOrigin='anonymous'`；`detectObstacleCandidates`/`sampleDraftingPixels`/`printReport` 的 `getImageData`/`toDataURL` 加 try/catch，跨域受限时返回结构化失败（`image_read_blocked`）或友好提示，不抛未捕获异常。
+  - **P1-6**：`emitHostChange()` 统一调用 `updateDeliveryGatePanel()`，任何通知宿主的状态变更都同步刷新本地门禁面板。
+- 验证命令与结果：
+  - `npm test`（`node scripts/check-inline.js`）：内联脚本语法 + manifest 解析全部通过。
+  - 待复核：交付门禁/候选/扣洞/导出/undo/print/iframe host 的人工模拟回归（见 `REVIEW-CHECKLIST.md` G1–G8 与 T1–T10）。
+- 未验证边界：
+  - 本批次为 Claude 实施、尚未经只读 reviewer 终审。
+  - 真实 iPad/Safari 触摸操作仍未验证；真实宿主生产 BOM/报价系统仍未接入。
+  - DWG/DXF/PDF 浏览器内导入为批次二，本批次未包含。
+
+## 2026-06-17 批次二 功能扩展（Claude 实施，浏览器实测，待终审）
+
+- 新版本标记：`v20260617-batch2` / `manifest.version=1.2.0-batch2-features`
+- 修改文件：`gantang-grid-designer/gantang-grid-designer.html`、`manifest.json`、`package.json`、新增 `gantang-grid-designer/vendor/*`、`MANIFEST.md`
+- 新增本地 vendor 库（离线、不走 CDN）：`jspdf 2.5.1 (MIT)`、`pdf.js 3.11.174 (Apache-2.0)`、`dxf 5.3.1 (MIT)`
+- 实施内容（按用户列点 #11/#3/#1/#10/#7/#8/#5/#4/#6/#9）：
+  - #11 算量金标准对照：矩形 20×30m@0.25=9600 格/600㎡、对齐洞 −64 格/596㎡、非对齐洞面积守恒、`Σ byMaterial==total` 全部数值正确（验证项，无代码改动）。
+  - #3 扣除区几何门禁：`validateProjectForDelivery` 新增 `hole_outside_tiling` / `hole_overlap` critical（多边形相交，复用 `polygonsIntersect`）。
+  - #1 触摸端：canvas 改 Pointer Events（鼠标+触屏+笔），`touch-action:none`，长按删点，`pointercancel`/捕获释放；桌面回归不变。
+  - #10 比例尺增强：单位系统 m/cm/mm/in、已知面积反推（`mpp=√(area_m²/area_px)`）、多法一致性提示。
+  - #7 多项目管理：localStorage 项目列表 保存/切换/删除/新建，配额超限降级只存几何；复用 `exportProjectData`/`applyProjectData` round-trip。
+  - #8 一键 PDF：`downloadReportPDF`（vendor jsPDF），交付门禁禁用兜底，`toDataURL` 跨域兜底。
+  - #5 PDF/DXF 浏览器内导入：PDF.js 渲染、dxf `toSVG` 光栅化，统一走现有导入管线；最长边封顶 4000px；DXF 读 `insUnits` 预填比例（仅建议，保持未校准）；DWG 升级提示走外部转 DXF；worker 本地。
+  - #4 识别内核：模板匹配 NCC（`detectObstacleByTemplate`，含空心方框/圆圈，NMS 去重，工作量上限保护）+ 按置信度批量确认；合成 ground-truth 9/9 命中。
+  - #6 报价估算：`buildQuote`（`gantang-quote.v1`，按块/按㎡），进 `exportProjectData`/`exportProjectSummary` 供宿主消费。
+  - #9 多材料：分区多材料已存在（4 材料 chips + `byMaterial` + 报价/CSV/JSON 分组），端到端验证通过；拼花（单区内多材料图案）列为后续。
+- 验证：`npm test` 通过；Chrome 预览实测（每步 console error=0）：交付门禁/扣洞数值/候选/确认/导入/模板匹配/报价/多项目/触屏均通过；PDF 在可见标签页正常（后台标签页 rAF 挂起为环境现象，非代码缺陷）。
+- 未验证边界：
+  - 识别召回/精确率仍需真实带标注的室内多柱、室外多树样本抽检（本批为合成 ground-truth 验证）。
+  - 真实 iPad/Safari 触摸、真实宿主 BOM/报价系统仍未接入。
+  - 本批为 Claude 实施 + 自测，尚未经独立 reviewer 终审。
+
+## 2026-06-17 独立复核修复（Claude 修，浏览器实测）
+
+- 新版本标记：`v20260617-batch2-rev` / `manifest.version=1.2.1-review-fixes`
+- 三个独立 reviewer（正确性/回归/安全）从源码重审，发现并修复：
+  - **P0 报价/候选 XSS**：`renderQuotePanel` 与候选列表 onclick 原用 `escapeJsString`（不转义 `"`），material 来自项目 JSON 可注入。改为 `data-` 属性 + `escapeHtml`，从 element 读取。实测恶意 material 不执行、无 live `<img>`。
+  - **P1 贴边洞误杀 + 越界绕过**：`hole_outside_tiling` / `candidateInsideClosedTiling` 由"顶点数 80%"改为**面积占比采样**（新增 `polygonInsideFraction`，门禁阈值 0.95、候选 0.9）。贴右/下边洞不再误报；多顶点+大外伸洞被正确拦截。
+  - **P1 共边洞误判重叠**：`hole_overlap` / `candidateOverlapsExistingHole` 由 `polygonsIntersect`（共边/共点即 true）改为**真实重叠面积**（新增 `polygonsRealOverlap`，阈值 2% 较小洞面积）。相邻不重叠的洞/候选可正常确认；真实重叠仍拦截。
+  - **P1 单位切换陷阱**：`onScaleUnitChange` 现调用 `syncInputs()` 按新单位重算输入框（含内联标尺单位标签），杜绝"切单位不重输→100× 比例错误"。实测 9.7m↔970cm 应用后 mpp 一致。
+  - **P1 报价/单位 round-trip**：`exportProjectData`/`persistDraft` 增加 `pricing`（mode+unitPrices）与 `scale.lengthUnit`；`applyProjectData`/`loadInitialProjectState` 恢复。实测单价 7 往返保留。
+  - **P2 解码上限地板**：PDF/DXF 渲染 `Math.max(0.2/0.1,fit)` 地板下调，不再突破 `MAX_DECODE_DIMENSION`。
+- 验证：`npm test` 通过；Chrome 预览实测（console error=0）：XSS 不触发、贴边洞/共边洞/真实重叠/越界绕过、单位切换、报价 round-trip、候选确认回归全部符合预期。
+- 未验证边界：识别召回/精确率仍需真实带标注样本；真实 iPad/Safari、真实宿主 BOM/报价未接入；本批仍为 Claude 实施+自测+一轮独立 reviewer，建议正式发布前再过一次人评。
+
+## 2026-06-17 DWG 导入引导（v20260617-batch2-rev2 / 1.2.2-dwg-guidance）
+
+- 真实样本验证：客户提供的 10 个文件均为真二进制 DWG（AC1015 / AutoCAD 2000），内置只支持 DXF/PDF，DWG 需先转换。
+- 据此改为引导式提示：用户选择 `.dwg` 时（`accept` 已加入 `.dwg`，否则被文件框过滤掉看不到提示）弹出明确指引——"请先转成 **DXF 或 PDF** 再导入"，并给 DWG→DXF（DWG TrueView / ODA File Converter，免费）与 DWG→PDF（CAD 打印/输出 PDF）两条路径。DWG 不会被误当底图。
+- 仅改 `gantang-grid-designer.html`（提示文案 + accept），浏览器实测：`.dwg` 可选、提示含 DXF 与 PDF、不被导入；`npm test` 通过、console error=0。
+
+## 2026-06-17 PR 复审跟进（v20260617-batch2-rev3 / 1.2.3-review-followup）
+
+针对 PR #1 reviewer 意见修复：
+- **版本一致性**：新增单一版本源 `APP_VERSION`，页面徽标改由 JS 注入、`obstacleDetection.version`（默认/导出）统一引用 `APP_VERSION`；`manifest.featureVersion` 与之对齐为 `v20260617-batch2-rev3`。不再出现徽标/导出 JSON 与 manifest 版本不一致。
+- **量单柱/树审计**：`exportCSV()` 增「5. 柱/树候选审计」段、`printReport()` 增「5. 柱/树候选审计」表，输出 已识别/已确认/已忽略/待确认，全忽略时带显式注意行。补齐之前只在门禁/JSON 层有、CSV/打印缺失的审计。
+- **HANDOFF.md** 状态更新为「PR #1 已开、待终审、勿合并」。
+- **PR 体积/检查**：`_backup` 不再随本分支新增（移除新增的 before-batch1 快照，PR 内 `_backup` 净 diff 为空，原 3 份保留待定）；新增 `.gitattributes` 将 `vendor/**` 标记 `-whitespace linguist-vendored`，`git diff --check` 不再因 vendor 尾空格失败。
+- 验证：`npm test` 通过；浏览器实测徽标=APP_VERSION、导出 JSON `obstacleDetection.version`=APP_VERSION、CSV/打印含审计段、console error=0。
+
+## 2026-06-19 形状扣除交互合并（v20260619-hole-shape-merge / 1.2.4-hole-shape-merge）
+
+- 定位：本 PR 包内 `gantang-grid-designer/gantang-grid-designer.html` 作为后续异形场地模块唯一主线；复杂拼接设计里的旧异形交互只作为参考来源，后续先更新本模块，再集成到其他模块。
+- 回退备份：
+  - `_backup/gantang-grid-designer-v20260619-2050-before-hole-shape-merge.html`
+  - `_backup/manifest-v20260619-2050-before-hole-shape-merge.json`
+  - `_backup/MANIFEST-v20260619-2050-before-hole-shape-merge.md`
+- 修改文件：
+  - `gantang-grid-designer/gantang-grid-designer.html`
+  - `gantang-grid-designer/manifest.json`
+  - `package.json`
+  - `MANIFEST.md`
+- 修改内容：
+  - 新增“矩形扣除 / 圆形扣除”拖拽工具，快速创建闭合 `type="hole"` 扣除区。
+  - 数据模型新增 `shapeKind=rect|circle|null`；底层仍输出标准 `points_px`，不破坏现有算量、门禁、JSON 和宿主接口。
+  - 圆形扣除用 48 点多边形近似参与算量，UI 隐藏顶点手柄并阻止右键/长按删点，避免破坏圆形语义。
+  - 矩形扣除一旦被手工拖动顶点、追加点或清空点，会自动降级为普通多边形，避免导出错误几何语义。
+  - 导入项目时校验 `shapeKind` 与点数自洽性：`rect` 必须 4 点、`circle` 必须 48 点，否则降级为普通多边形。
+  - CSV、打印报告和一键 PDF 增加扣除区几何信息；JSON 导出/导入 round-trip 保留 `shapeKind`。
+  - 状态条和 Escape 取消逻辑同步形状扣除工具状态。
+- 验证命令与结果：
+  - `npm test`：内联脚本语法 + `manifest.json` 解析通过。
+  - `git diff --check`：通过。
+  - Playwright 真实画布拖拽：矩形扣除生成 `type=hole/shapeKind=rect/4点`；圆形扣除生成 `type=hole/shapeKind=circle/48点`；导出 JSON 保留 `shapeKind`；console/pageerror=0。
+  - Playwright ready 场景报表：打印区域表包含“矩形”“圆形”；CSV 下载包含 `类型,几何,顶点数量` 且扣除区行分别为矩形 4 点、圆形 48 点；一键 PDF 函数执行成功且 jsPDF 已加载；console/pageerror=0。
+  - DS 复核后补测：篡改 JSON 导入时，`shapeKind=rect` 但非 4 点、`shapeKind=circle` 但非 48 点均降级并在再次导出时为 `null`；合法 4 点矩形保持 `rect`。
+- 未验证边界：
+  - 尚未把本 canonical 模块反向集成到复杂拼接设计、iOS 或其他宿主。
+  - 真实 iPad/Safari 触摸拖拽仍需人工确认。
+
 ## SHA-256
 
 ```text
 42f561d59180d6e333d2659aa3ed6e75fd03a97a01f4c29ca354d185dc1f6f7b  ./README.md
-a04dceb44dd5f08eb8e6ca2111207188fe9a17cbcee588e39bd4b7f27735937d  ./gantang-grid-designer/gantang-grid-designer-integration.md
-63e05d48307cdc8ee7f7cc1e7114d1abda8d09e7aaca0841c3fa23ab98bfffc4  ./gantang-grid-designer/gantang-grid-designer.html
+d44acaea2fb972808734bd15bd80fabc03c19b44c061387071672c51352edf82  ./package.json
+ca441674f369bc2fd6b8503e4274b2111e3155da6d21b1af80c859d113b1648b  ./scripts/check-inline.js
+852649512ca544ab9baeeda2d2305f87368ff2484096df20fcd63e5898256cca  ./index.html
+021a360621192377cba06766203da7d439ac845dc603ee46c79577ad2a28334b  ./gantang-grid-designer/gantang-grid-designer.html
+2c3dff1c92da22afa14ec9fdd30cb6e98f2eb1ec3fe73878e06ffbcb9d6340b5  ./gantang-grid-designer/gantang-grid-designer-integration.md
+917c1267a5ab5725d7e61346a90df1aace4509eeb45f79ce0da96b0e069e6b5f  ./gantang-grid-designer/manifest.json
+b4a8fc495f55767c9a9d28f4b15fb337e235975ea26f9cebda330a6d44dfc6ba  ./gantang-grid-designer/integration-host-demo.html
 1d2ab502040cf7ae86348b0aeeb6cd6f3b30b4d49950e14f6b2592d5bc84e6e8  ./gantang-grid-designer/gantang-page08-plan.png
+5cfc1a057c26f59ab191821787ff5e01848b73cc40e954e2b061a04dfa4bb86f  ./gantang-grid-designer/import-batch/cad-screenshot-06.png
+8d357e63a161d0f613e4b2994f7a50291f69672ba00df1166896584731c62c5a  ./gantang-grid-designer/smoke-dim-labels-after-fix.png
 5cfc1a057c26f59ab191821787ff5e01848b73cc40e954e2b061a04dfa4bb86f  ./gantang-grid-designer/history-drawings/history-001-cad-screenshot-06.png
 636ff6b93119137ed414c4d28c708cecc7dd449c2a857f36b2eb6f4a00b56f50  ./gantang-grid-designer/history-drawings/history-002-school-l-plan.svg
 162f135f1183707572f45e7482bee1845c086461591afb0ac7e6757cee9b60ca  ./gantang-grid-designer/history-drawings/history-003-courtyard-hole.svg
 6d5c36baf1a7e8ecb914cc98e2b2b31578c33c51f2c17438aaebd54b6cf19d60  ./gantang-grid-designer/history-drawings/history-004-narrow-angled-plan.svg
-5cfc1a057c26f59ab191821787ff5e01848b73cc40e954e2b061a04dfa4bb86f  ./gantang-grid-designer/import-batch/cad-screenshot-06.png
-b4a8fc495f55767c9a9d28f4b15fb337e235975ea26f9cebda330a6d44dfc6ba  ./gantang-grid-designer/integration-host-demo.html
-15cae6490e067103e4f1d1a68492d9a3e0f5ecc862c0b413e02675aba020efda  ./gantang-grid-designer/manifest.json
-8d357e63a161d0f613e4b2994f7a50291f69672ba00df1166896584731c62c5a  ./gantang-grid-designer/smoke-dim-labels-after-fix.png
-852649512ca544ab9baeeda2d2305f87368ff2484096df20fcd63e5898256cca  ./index.html
+98ccf17aa10c20bb1301762618fcc9b6ab3a4e7f26b6071d64d0b41154df3875  ./gantang-grid-designer/vendor/jspdf.umd.min.js
+5b5799e6f8c680663207ac5b42ee14eed2a406fa7af48f50c154f0c0b1566946  ./gantang-grid-designer/vendor/pdf.min.js
+feabdf309770ed24bba31a5467836cdc8cf639c705af27d52b585b041bb8527b  ./gantang-grid-designer/vendor/pdf.worker.min.js
+769e65397d099ea3af3dbd944ad986dac481b585004507a112840b6e16728485  ./gantang-grid-designer/vendor/dxf.js
 ```
 
 ## 本地预览

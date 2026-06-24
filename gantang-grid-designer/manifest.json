@@ -1,7 +1,7 @@
 {
   "name": "gantang-grid-designer-integration",
-  "version": "1.1.2-state-integrity",
-  "featureVersion": "v20260616-1508",
+  "version": "1.2.4-hole-shape-merge",
+  "featureVersion": "v20260619-hole-shape-merge",
   "bridgeVersion": "gantang-grid-designer.bridge.v1",
   "entry": "gantang-grid-designer.html",
   "hostDemo": "integration-host-demo.html",
@@ -11,14 +11,19 @@
     "jpg",
     "jpeg",
     "webp",
-    "svg"
+    "svg",
+    "pdf",
+    "dxf"
   ],
   "preprocessInputs": [
-    "pdf",
     "doc",
     "docx",
-    "dwg",
-    "dxf"
+    "dwg"
+  ],
+  "vendoredLibraries": [
+    { "name": "jspdf", "version": "2.5.1", "license": "MIT", "file": "vendor/jspdf.umd.min.js" },
+    { "name": "pdf.js", "version": "3.11.174", "license": "Apache-2.0", "file": "vendor/pdf.min.js" },
+    { "name": "dxf", "version": "5.3.1", "license": "MIT", "file": "vendor/dxf.js" }
   ],
   "outputSchema": "gantang-project.v1",
   "obstacleDetectionSchema": "gantang-obstacle-detection.v1",

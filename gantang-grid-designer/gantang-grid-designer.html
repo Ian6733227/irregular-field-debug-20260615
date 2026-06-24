@@ -198,6 +198,11 @@
       height: 100%;
     }
 
+    #planCanvas {
+      /* 触屏作图：禁用浏览器默认手势（滚动/缩放），让 pointer 事件接管。 */
+      touch-action: none;
+    }
+
     .canvas-container > canvas {
       flex: 1 1 auto;
       min-height: 0;
@@ -445,6 +450,12 @@
 
     button.danger-outline:hover {
       background: #fff0ee;
+    }
+
+    button.shape-tool-active {
+      color: #ffffff;
+      background: #7c3aed;
+      border-color: #6d28d9;
     }
 
     button:disabled {
@@ -1193,6 +1204,9 @@
     #printReport {
       display: none;
     }
+    #printFallbackNotice {
+      display: none;
+    }
 
     @media print {
       body {
@@ -1200,6 +1214,18 @@
         background: #fff;
       }
       .app {
+        display: none;
+      }
+      /* 未通过“打印 / PDF”按钮生成报表时（如直接 Ctrl+P），显示提示而不是空白页。 */
+      #printFallbackNotice {
+        display: block;
+        padding: 30px;
+        font-size: 14px;
+        line-height: 1.8;
+        color: #000;
+        background: #fff;
+      }
+      #printReport[data-print-ready="true"] ~ #printFallbackNotice {
         display: none;
       }
       #printReport[data-print-ready="true"] {
@@ -1269,7 +1295,7 @@
     <header class="topbar">
       <div class="brand">
         <h1>异形场地导入</h1>
-        <span class="badge">本地离线版 v20260616-1508</span>
+        <span class="badge" id="appVersionBadge">本地离线版</span>
       </div>
       <div class="global-actions">
         <div class="action-group">
@@ -1282,12 +1308,21 @@
           <button onclick="triggerLoadProject()">载入项目 JSON</button>
           <button onclick="saveProject()" id="saveProjectBtn" class="primary">保存项目</button>
         </div>
+        <div class="action-group">
+          <select id="projectSelect" onchange="loadSelectedProject(this.value)" title="切换已存项目">
+            <option value="">— 未命名 —</option>
+          </select>
+          <button onclick="newProject()" title="新建空白项目">新建</button>
+          <button onclick="saveCurrentProjectPrompt()" title="保存/另存为命名项目">存为项目</button>
+          <button onclick="deleteCurrentProject()" title="删除当前项目">删除</button>
+        </div>
         <input type="file" id="fileInput" onchange="loadProject(event)" accept=".json">
-        <input type="file" id="drawingInput" onchange="importDrawing(event)" accept=".png,.jpg,.jpeg,.webp,.svg,image/png,image/jpeg,image/webp,image/svg+xml">
+        <input type="file" id="drawingInput" onchange="importDrawing(event)" accept=".png,.jpg,.jpeg,.webp,.svg,.pdf,.dxf,.dwg,image/png,image/jpeg,image/webp,image/svg+xml,application/pdf">
         <div class="action-group">
           <button onclick="exportCSV()" id="exportCsvBtn" class="success">导出 CSV</button>
           <button onclick="exportCutSVG()" id="exportSvgBtn" class="success">导出裁切 SVG</button>
           <button onclick="printReport()" id="printReportBtn" class="primary">打印 / PDF</button>
+          <button onclick="downloadReportPDF()" id="downloadPdfBtn" class="primary">下载 PDF</button>
         </div>
       </div>
     </header>
@@ -1383,6 +1418,10 @@
               <button onclick="addNewRegion('hole')" class="primary" style="flex: 1;">新增扣除区域</button>
             </div>
             <div class="field-row region-action-row">
+              <button id="rectHoleToolBtn" onclick="addPresetHoleShape('rect')" class="primary" style="flex: 1;" title="拖拽一个矩形扣除区">矩形扣除</button>
+              <button id="circleHoleToolBtn" onclick="addPresetHoleShape('circle')" class="primary" style="flex: 1;" title="拖拽一个圆形扣除区">圆形扣除</button>
+            </div>
+            <div class="field-row region-action-row">
               <button onclick="closeActiveRegion()" class="success" style="flex: 1;">闭合当前区域</button>
               <button onclick="resnapActiveRegion()" class="primary" style="flex: 1;">重吸附当前区域</button>
             </div>
@@ -1415,8 +1454,15 @@
                 <button onclick="toggleObstacleOverlay()" id="obstacleOverlayBtn">隐藏</button>
               </div>
               <div class="field-row region-action-row">
+                <button onclick="detectObstacleByTemplateFromActiveRegion()" class="primary" style="flex: 1;" title="先框选并选中一个柱/树小框，再点此按钮，找出图上所有同类">以选中框为模板找同类</button>
+              </div>
+              <div class="field-row region-action-row">
                 <button onclick="confirmAllObstacleCandidates()" class="success" style="flex: 1;">全部确认</button>
                 <button onclick="ignoreAllObstacleCandidates()" class="danger-outline" style="flex: 1;">全部忽略</button>
+              </div>
+              <div class="field-row region-action-row">
+                <input id="obstacleConfThreshold" type="number" min="0" max="100" step="1" value="80" style="width:70px;" title="置信度阈值 %">
+                <button onclick="confirmObstacleCandidatesByConfidence()" class="success" style="flex: 1;" title="确认所有不低于该置信度的候选">按置信度批量确认</button>
               </div>
               <div class="obstacle-summary" id="obstacleSummary">候选 0 · 待确认 0 · 不参与算量</div>
               <div class="obstacle-candidates-list" id="obstacleCandidatesList"></div>
@@ -1443,12 +1489,32 @@
               <label>标定真实物理长度</label>
               <div class="field-row">
                 <input id="scaleLength" type="number" step="0.01" value="9.70" onchange="syncScaleLengthInputs(this.value)" style="flex: 1;">
-                <span>米 (m)</span>
+                <select id="scaleLengthUnit" onchange="onScaleUnitChange(this.value)">
+                  <option value="m">米 m</option>
+                  <option value="cm">厘米 cm</option>
+                  <option value="mm">毫米 mm</option>
+                  <option value="in">英寸 in</option>
+                </select>
               </div>
             </div>
             <button onclick="applyScaleRuler()" class="primary" id="applyScaleBtn" disabled>应用此标尺</button>
             <button onclick="applyPresetScale()" class="success">自动比例尺 (图签 1:175)</button>
           </div>
+          <div class="control-group">
+            <div class="section-title" style="margin-top:6px;">已知面积反推比例尺</div>
+            <p style="font-size:12px; line-height:1.5; margin:0; color:var(--muted);">
+              先在「区域」里画好并闭合一个真实面积已知的区域，选中后在此输入其真实面积，按当前单位反推比例尺。
+            </p>
+            <div class="field">
+              <label>选中区域真实面积</label>
+              <div class="field-row">
+                <input id="areaCalibValue" type="number" step="0.01" placeholder="例如 600" style="flex: 1;">
+                <span id="areaCalibUnitLabel">㎡</span>
+              </div>
+            </div>
+            <button onclick="applyAreaCalibration()" class="primary">按面积反推比例尺</button>
+          </div>
+          <div id="scaleConsistencyNote" style="display:none; font-size:12px; margin-top:6px; color:#9a6700; font-weight:700;"></div>
         </div>
 
         <!-- Mode controls: Grid Layout -->
@@ -1499,7 +1565,7 @@
               <label>比例尺校准</label>
               <div class="scale-quick-grid">
                 <div>
-                  <span class="mini-label">标尺长度 (m)</span>
+                  <span class="mini-label">标尺长度 (<span id="scaleLengthInlineUnit">m</span>)</span>
                   <input id="scaleLengthInline" type="number" step="0.01" value="9.70" onchange="syncScaleLengthInputs(this.value)">
                 </div>
                 <button onclick="applyPresetScale()">图签 1:175</button>
@@ -1568,6 +1634,19 @@
           <div class="cuts-list" id="cutsList">
             暂无裁切件。
           </div>
+        </div>
+
+        <!-- 报价估算（设计器侧；可被宿主 BOM/报价消费） -->
+        <div>
+          <div class="section-title">报价估算</div>
+          <div class="field-row" style="gap:6px; align-items:center;">
+            <label style="font-size:12px;">计价方式</label>
+            <select id="quoteMode" onchange="onQuoteChange()">
+              <option value="per-tile">按块（元/块）</option>
+              <option value="per-area">按面积（元/㎡）</option>
+            </select>
+          </div>
+          <div id="quotePanel" class="cuts-list">设置单价后显示分材料小计与合计。</div>
         </div>
 
         <!-- Export JSON Output console -->
@@ -1658,15 +1737,32 @@
           <th>区域名称</th>
           <th>材料属性</th>
           <th>类型</th>
+          <th>几何</th>
           <th>边界顶点数</th>
         </tr>
       </thead>
       <tbody id="ptRegionsBody">
         <tr>
-          <td colspan="5">无定义区域</td>
+          <td colspan="6">无定义区域</td>
         </tr>
       </tbody>
     </table>
+
+    <h2>5. 柱/树候选审计</h2>
+    <table class="print-table" id="ptObstacleTable">
+      <thead>
+        <tr>
+          <th>已识别 (候选)</th>
+          <th>已确认 (转扣除区)</th>
+          <th>已忽略</th>
+          <th>待确认</th>
+        </tr>
+      </thead>
+      <tbody id="ptObstacleBody">
+        <tr><td colspan="4">未识别</td></tr>
+      </tbody>
+    </table>
+    <p id="ptObstacleNote" style="display:none; color:#9a6700; font-weight:700;"></p>
 
     <div class="print-canvases">
       <div class="print-canvas-wrapper">
@@ -1680,14 +1776,24 @@
     </div>
   </div>
 
+  <div id="printFallbackNotice">
+    <h1>未生成打印报表</h1>
+    <p>请先在页面里点击「打印 / PDF」按钮生成排布报表，再打印或导出 PDF。</p>
+    <p>直接使用浏览器的打印（Ctrl/Cmd + P）不会输出报表内容，这是为了避免打印到过期或未通过交付门禁的数据。</p>
+  </div>
+
+  <!-- 本地 vendor 库（离线，不走 CDN）：jsPDF MIT / PDF.js Apache-2.0 / dxf MIT -->
+  <script src="vendor/jspdf.umd.min.js"></script>
+  <script src="vendor/pdf.min.js"></script>
+  <script src="vendor/dxf.js"></script>
+
   <!-- JavaScript App Code -->
   <script>
     const urlParams = new URLSearchParams(window.location.search);
     const urlImageOverride = sanitizeRelativeImagePath(urlParams.get('image'));
     const configuredHostOriginParam = urlParams.get('parentOrigin') || urlParams.get('hostOrigin');
     const DEBUG_MODE = urlParams.get('debug') === '1'
-      || urlParams.get('debug') === 'true'
-      || window.location.pathname.includes('irregular-field-debug');
+      || urlParams.get('debug') === 'true';
     const defaultImagePath = urlImageOverride || 'gantang-page08-plan.png';
     let currentImagePath = defaultImagePath;
     let currentImageDataUrl = null;
@@ -1696,21 +1802,27 @@
     let currentImageSource = defaultImagePath;
     const MAX_HISTORY_ENTRIES = 250;
     const DESIGNER_BRIDGE_VERSION = 'gantang-grid-designer.bridge.v1';
+    const APP_VERSION = 'v20260619-hole-shape-merge'; // 单一版本源：徽标 + obstacleDetection 版本字段（与 manifest.featureVersion 保持一致）
     const DESIGNER_BRIDGE_SOURCE = 'gantang-grid-designer';
     const DESIGNER_HOST_SOURCE = 'gantang-grid-host';
     const DESIGNER_LOCAL_FILE_TARGET_ORIGIN = '*';
     const configuredHostOrigin = normalizeBridgeOrigin(configuredHostOriginParam);
     const DRAWING_HISTORY_STORAGE_KEY = 'gantang-drawing-history-v1';
+    const PROJECTS_STORAGE_KEY = 'gantang-projects-v1';
+    const ACTIVE_PROJECT_KEY = 'gantang-active-project-id';
+    let activeProjectId = null;
     const MAX_STORED_DRAWING_HISTORY = 12;
     const MAX_STORED_DRAWING_DATA_URL_LENGTH = 2.8 * 1024 * 1024;
     const DIRECT_DRAWING_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'svg'];
     const MAX_DELIVERY_TILES = 50000;
     const MAX_GRID_CANDIDATE_CELLS = 120000;
+    const MAX_IGNORED_OBSTACLE_CANDIDATES = 200;
     const MIN_REASONABLE_METERS_PER_PIXEL = 0.001;
     const MAX_REASONABLE_METERS_PER_PIXEL = 1;
     let bridgeReadySent = false;
     let designerTrustedHostOrigin = '';
     let lastGridBuildWarning = '';
+    const quoteState = { mode: 'per-tile', unitPrices: {} };
 
     function inferDesignerHostOrigin() {
       if (designerTrustedHostOrigin) return designerTrustedHostOrigin;
@@ -1862,7 +1974,14 @@
 	    };
 
     const image = new Image();
+    // 允许同源/带 CORS 头的底图在 canvas 上做 getImageData / toDataURL 而不污染画布。
+    image.crossOrigin = 'anonymous';
     image.src = currentImageSource;
+
+    // PDF.js worker 指向本地 vendor 文件（离线，不走 CDN）。
+    if (window.pdfjsLib && pdfjsLib.GlobalWorkerOptions) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
+    }
     let appInitialized = false;
 
     // App Global State
@@ -1899,7 +2018,7 @@
       // Obstacle detection candidates stay outside regions until reviewed.
       obstacleDetection: {
         schema: 'gantang-obstacle-detection.v1',
-        version: 'v20260616-1508',
+        version: APP_VERSION,
         showOverlay: true,
         selectedCandidateId: null,
         settings: {
@@ -1919,6 +2038,8 @@
 
       // Interactive drag target
       dragTarget: null, // { type: 'point', rIdx, pIdx } or { type: 'origin' } or { type: 'scale', idx }
+      holeShapeTool: null,
+      holeShapeDraft: null,
 
       // Snapping
       autoSnap: true,
@@ -1943,6 +2064,12 @@
       scaleInput: document.getElementById('scaleInput'),
       scaleLength: document.getElementById('scaleLength'),
       scaleLengthInline: document.getElementById('scaleLengthInline'),
+      scaleLengthInlineUnit: document.getElementById('scaleLengthInlineUnit'),
+      scaleLengthUnit: document.getElementById('scaleLengthUnit'),
+      projectSelect: document.getElementById('projectSelect'),
+      areaCalibValue: document.getElementById('areaCalibValue'),
+      areaCalibUnitLabel: document.getElementById('areaCalibUnitLabel'),
+      scaleConsistencyNote: document.getElementById('scaleConsistencyNote'),
       applyScaleBtn: document.getElementById('applyScaleBtn'),
       applyScaleBtnInline: document.getElementById('applyScaleBtnInline'),
       scaleRulerStatus: document.getElementById('scaleRulerStatus'),
@@ -1966,6 +2093,9 @@
       obstacleOverlayBtn: document.getElementById('obstacleOverlayBtn'),
       obstacleSummary: document.getElementById('obstacleSummary'),
       obstacleCandidatesList: document.getElementById('obstacleCandidatesList'),
+      obstacleConfThreshold: document.getElementById('obstacleConfThreshold'),
+      quoteMode: document.getElementById('quoteMode'),
+      quotePanel: document.getElementById('quotePanel'),
 
       statArea: document.getElementById('statArea'),
       statTotalArea: document.getElementById('statTotalArea'),
@@ -1981,6 +2111,7 @@
       exportCsvBtn: document.getElementById('exportCsvBtn'),
       exportSvgBtn: document.getElementById('exportSvgBtn'),
       printReportBtn: document.getElementById('printReportBtn'),
+      downloadPdfBtn: document.getElementById('downloadPdfBtn'),
       debugJsonPanel: document.getElementById('debugJsonPanel'),
       drawingHistoryBtn: document.getElementById('drawingHistoryBtn'),
       magnifier: document.getElementById('magnifier'),
@@ -1994,6 +2125,7 @@
     let offscreenCtx = null;
 
     syncDebugVisibility();
+    (() => { const vb = document.getElementById('appVersionBadge'); if (vb) vb.textContent = '本地离线版 ' + APP_VERSION; })();
 
     image.onload = () => {
       initOffscreen();
@@ -2003,6 +2135,7 @@
         if (reloadingImage) return;
         appInitialized = true;
         saveHistory();
+        renderProjectSelect();
       }
       syncInputs();
       renderAll();
@@ -2071,7 +2204,7 @@
     function defaultObstacleDetectionState() {
       return {
         schema: 'gantang-obstacle-detection.v1',
-        version: 'v20260616-1508',
+        version: APP_VERSION,
         showOverlay: true,
         selectedCandidateId: null,
         settings: {
@@ -2242,6 +2375,18 @@
       ));
     }
 
+    // 防止反复扫描后 ignored 候选无限堆积：pending/confirmed 全部保留，ignored 只保留最近 N 个。
+    function trimIgnoredObstacleCandidates() {
+      normalizeObstacleDetectionState();
+      const candidates = state.obstacleDetection.candidates;
+      const ignored = candidates.filter(c => c.status === 'ignored');
+      if (ignored.length <= MAX_IGNORED_OBSTACLE_CANDIDATES) return;
+      const keepIgnored = new Set(ignored.slice(-MAX_IGNORED_OBSTACLE_CANDIDATES).map(c => c.id));
+      state.obstacleDetection.candidates = candidates.filter(c => (
+        c.status !== 'ignored' || keepIgnored.has(c.id)
+      ));
+    }
+
     function buildProjectWarnings() {
       return [
         ...(state.scale.needsCalibration ? [{
@@ -2350,6 +2495,35 @@
         }
       });
 
+      // 扣除区几何门禁：无论候选确认还是手动编辑，洞必须落在铺装区内、且洞之间不重叠。
+      const closedTilingPolygons = closedTilingRegions.map(r => r.points);
+      const closedHoles = activeRegions.filter(r => r.type === 'hole' && r.closed !== false && r.points.length >= 3);
+      if (closedTilingPolygons.length) {
+        closedHoles.forEach((hole) => {
+          // 面积占比法：贴铺装区边界的洞不误杀，大幅外伸的洞会被拦。
+          if (polygonInsideFraction(hole.points, closedTilingPolygons) < 0.95) {
+            errors.push(severityEntry(
+              'critical',
+              'hole_outside_tiling',
+              `${hole.name || hole.id} 扣除区越出铺装区域边界，请调整后再交付。`,
+              { regionId: hole.id }
+            ));
+          }
+        });
+      }
+      for (let i = 0; i < closedHoles.length; i++) {
+        for (let j = i + 1; j < closedHoles.length; j++) {
+          if (polygonsRealOverlap(closedHoles[i].points, closedHoles[j].points)) {
+            errors.push(severityEntry(
+              'critical',
+              'hole_overlap',
+              `${closedHoles[i].name || closedHoles[i].id} 与 ${closedHoles[j].name || closedHoles[j].id} 扣除区互相重叠，请合并或调整。`,
+              { regionIds: [closedHoles[i].id, closedHoles[j].id] }
+            ));
+          }
+        }
+      }
+
       if (!generatedCells.length) {
         errors.push(severityEntry('critical', 'no_valid_tiles', '当前没有生成有效铺装格子。'));
       }
@@ -2389,6 +2563,19 @@
           'candidate_region_link_invalid',
           '柱/树候选扣除区缺少对应的已确认候选记录，请重新扫描并确认候选。',
           { candidateRegionLinkIssues: linkIssues }
+        ));
+      }
+
+      // 漏检防线（非阻断）：本项目扫描过、但所有候选都被忽略且无一确认，
+      // 说明可能漏扣了真实柱/树。仅在扫描过（runs 非空）时提示，避免误伤“本就无障碍”的正常项目。
+      const obstacleGateSummary = obstacleDetectionSummary();
+      const obstacleScanned = Array.isArray(state.obstacleDetection.runs) && state.obstacleDetection.runs.length > 0;
+      if (obstacleScanned && obstacleGateSummary.confirmed === 0 && obstacleGateSummary.ignored > 0) {
+        warnings.push(severityEntry(
+          'warning',
+          'obstacle_candidates_all_ignored',
+          `已识别 ${obstacleGateSummary.total} 个柱/树候选但全部忽略、未确认任何扣除区，量单未做障碍扣减，请业务确认现场确实无需扣除。`,
+          { obstacleSummary: obstacleGateSummary }
         ));
       }
 
@@ -2432,10 +2619,18 @@
       const validation = validateProjectForDelivery();
       els.deliveryGatePanel.classList.toggle('ready', validation.ready);
       els.deliveryGatePanel.classList.toggle('blocked', !validation.ready);
-      els.deliveryGatePanel.innerHTML = validation.ready
+      const obs = obstacleDetectionSummary();
+      const obstacleLine = obs.total > 0
+        ? `<span>柱/树候选：已识别 ${obs.total} · 已确认 ${obs.confirmed} · 已忽略 ${obs.ignored} · 待确认 ${obs.pending}</span>`
+        : '';
+      const warnLine = validation.warnings.length
+        ? `<span style="color:#9a6700;font-weight:700;">注意：${escapeHtml(validation.warnings.map(item => item.message).join('；'))}</span>`
+        : '';
+      els.deliveryGatePanel.innerHTML = (validation.ready
         ? '<strong>交付门禁通过</strong><span>正式 CSV、裁切 SVG、打印/PDF 和宿主报价数据可使用。</span>'
-        : `<strong>交付门禁阻断</strong><span>${escapeHtml(validation.errors.slice(0, 3).map(item => item.message).join('；'))}${validation.errors.length > 3 ? '；...' : ''}</span>`;
-      [els.exportCsvBtn, els.exportSvgBtn, els.printReportBtn].forEach((button) => {
+        : `<strong>交付门禁阻断</strong><span>${escapeHtml(validation.errors.slice(0, 3).map(item => item.message).join('；'))}${validation.errors.length > 3 ? '；...' : ''}</span>`)
+        + obstacleLine + warnLine;
+      [els.exportCsvBtn, els.exportSvgBtn, els.printReportBtn, els.downloadPdfBtn].forEach((button) => {
         if (!button) return;
         button.disabled = !validation.ready;
         button.title = validation.ready ? '' : '需先通过交付门禁';
@@ -2448,6 +2643,63 @@
       state.scale.lengthM = Math.max(0, Number(state.scale.lengthM) || 9.70);
       state.scale.needsCalibration = Boolean(state.scale.needsCalibration);
       state.scale.source = state.scale.source || 'legacy';
+      state.scale.lengthUnit = SCALE_UNIT_FACTORS[state.scale.lengthUnit] ? state.scale.lengthUnit : 'm';
+    }
+
+    const SCALE_UNIT_FACTORS = { m: 1, cm: 0.01, mm: 0.001, in: 0.0254 };
+    const SCALE_UNIT_AREA_LABELS = { m: '㎡', cm: 'cm²', mm: 'mm²', in: 'in²' };
+    function currentScaleUnit() {
+      return SCALE_UNIT_FACTORS[state.scale.lengthUnit] ? state.scale.lengthUnit : 'm';
+    }
+    function lengthToMeters(value) {
+      return Number(value) * SCALE_UNIT_FACTORS[currentScaleUnit()];
+    }
+    function areaToSquareMeters(value) {
+      const f = SCALE_UNIT_FACTORS[currentScaleUnit()];
+      return Number(value) * f * f;
+    }
+    function onScaleUnitChange(unit) {
+      state.scale.lengthUnit = SCALE_UNIT_FACTORS[unit] ? unit : 'm';
+      // 关键：切换单位后必须把输入框按新单位重算显示，否则旧数字会被当成新单位（可致 100× 比例错误）。
+      syncInputs();
+      persistDraft();
+    }
+    // 多段/多法交叉校验：与当前已校准比例尺差异过大则提示（非阻断）。
+    function checkScaleConsistency(newMpp, label) {
+      if (!els.scaleConsistencyNote) return;
+      const oldMpp = Number(state.scale.metersPerPixel);
+      const note = els.scaleConsistencyNote;
+      if (!state.scale.needsCalibration && Number.isFinite(oldMpp) && oldMpp > 0 && Number.isFinite(newMpp) && newMpp > 0) {
+        const diff = Math.abs(newMpp - oldMpp) / Math.max(oldMpp, newMpp);
+        if (diff > 0.15) {
+          note.textContent = `注意：${label || '新标定'} 得到 ${newMpp.toFixed(6)} m/px，与原 ${oldMpp.toFixed(6)} m/px 相差 ${(diff * 100).toFixed(1)}%，请复核标定是否一致。`;
+          note.style.display = 'block';
+          return;
+        }
+      }
+      note.textContent = '';
+      note.style.display = 'none';
+    }
+    function applyAreaCalibration() {
+      const region = state.regions[state.activeRegionIndex];
+      if (!region || !Array.isArray(region.points) || region.points.length < 3) {
+        alert('请先选中一个已闭合、至少 3 个顶点的区域，再按面积反推比例尺。');
+        return;
+      }
+      const areaPx = Math.abs(polygonArea(region.points));
+      const realArea = areaToSquareMeters(els.areaCalibValue ? els.areaCalibValue.value : 0);
+      if (!(areaPx > 0) || !(realArea > 0)) {
+        alert('真实面积或区域像素面积无效，无法反推比例尺。');
+        return;
+      }
+      const newMpp = Math.sqrt(realArea / areaPx);
+      checkScaleConsistency(newMpp, '面积反推');
+      state.scale.metersPerPixel = Math.max(1e-7, newMpp);
+      setScaleCalibrationState(false, 'area-back-calculation');
+      saveHistory();
+      syncInputs();
+      renderAll();
+      emitHostChange('scale-area-calibrated');
     }
 
     function setScaleCalibrationState(needsCalibration, source) {
@@ -2537,6 +2789,7 @@
           wasteArea_m2: takeoff.wasteArea_m2,
           byMaterial: takeoff.byMaterial
         },
+        quote: buildQuote(),
         delivery: {
           ready: validation.ready,
           status: validation.status,
@@ -2577,6 +2830,8 @@
 
     function emitHostChange(reason) {
       clearPrintReport();
+      // 任何会通知宿主的状态变更，同时刷新本地交付门禁面板，保证按钮禁用态/提示与状态一致。
+      updateDeliveryGatePanel();
       if (!bridgeReadySent) return;
       emitHostMessage('gantang-grid-designer:change', {
         reason,
@@ -2842,6 +3097,11 @@
           state.tileSize = loaded.tileSize || 0.25;
           state.autoSnap = loaded.autoSnap ?? state.autoSnap;
           state.showMagnifier = loaded.showMagnifier ?? state.showMagnifier;
+          if (loaded.pricing && typeof loaded.pricing === 'object') {
+            quoteState.mode = loaded.pricing.mode === 'per-area' ? 'per-area' : 'per-tile';
+            quoteState.unitPrices = (loaded.pricing.unitPrices && typeof loaded.pricing.unitPrices === 'object')
+              ? { ...loaded.pricing.unitPrices } : {};
+          }
           state.activeRegionIndex = Math.max(0, state.regions.length - 1);
           if (reloadingImage) return true;
         } catch(e) {
@@ -2971,8 +3231,13 @@
     function syncInputs() {
       els.tileSize.value = state.tileSize;
       els.scaleInput.value = state.scale.metersPerPixel;
-      els.scaleLength.value = state.scale.lengthM;
-      els.scaleLengthInline.value = state.scale.lengthM;
+      const unit = currentScaleUnit();
+      const lenInUnit = round(state.scale.lengthM / SCALE_UNIT_FACTORS[unit], 4);
+      els.scaleLength.value = lenInUnit;
+      els.scaleLengthInline.value = lenInUnit;
+      if (els.scaleLengthUnit) els.scaleLengthUnit.value = unit;
+      if (els.scaleLengthInlineUnit) els.scaleLengthInlineUnit.textContent = unit;
+      if (els.areaCalibUnitLabel) els.areaCalibUnitLabel.textContent = SCALE_UNIT_AREA_LABELS[unit];
       els.straightenSlider.value = state.imageRotation;
       els.straightenVal.textContent = state.imageRotation + '°';
       els.rotationSlider.value = state.gridRotation;
@@ -3029,12 +3294,13 @@
         const pointsCount = r.points.length;
         const name = escapeHtml(r.name || ('区域 ' + (idx + 1)));
         const material = escapeHtml(r.material);
+        const geometry = r.type === 'hole' ? `${shapeKindLabel(regionShapeKind(r))}扣除` : '多边形';
         const closed = r.closed ? '(闭合)' : '';
         return `
           <div class="region-item ${activeClass}" onclick="selectRegion(${idx})">
             <div class="region-info">
               <span class="region-name">${icon} ${name}</span>
-              <span class="region-meta">${material} | ${pointsCount}点 ${closed}</span>
+              <span class="region-meta">${material} | ${geometry} | ${pointsCount}点 ${closed}</span>
             </div>
             <button class="region-delete-btn" onclick="event.stopPropagation(); deleteRegion(${idx})">×</button>
           </div>
@@ -3071,16 +3337,16 @@
           ? `直径 ${formatMeters(candidate.metrics.diameterM)}`
           : (candidate.metrics?.widthM ? `${formatMeters(candidate.metrics.widthM)} × ${formatMeters(candidate.metrics.heightM)}` : `${candidate.points.length}点`);
         const confidence = Math.round(candidate.confidence * 100);
-        const safeId = escapeJsString(candidate.id);
+        const safeId = escapeHtml(candidate.id);
         return `
-          <div class="obstacle-candidate-item${selected}" onclick="selectObstacleCandidate('${safeId}')">
+          <div class="obstacle-candidate-item${selected}" data-candidate-id="${safeId}" onclick="selectObstacleCandidate(this.dataset.candidateId)">
             <div class="obstacle-candidate-meta">
               <strong>${idx + 1}. ${escapeHtml(obstacleKindLabel(candidate.kind))}候选 · ${confidence}%</strong>
               <span>${escapeHtml(sizeLabel)} · ${escapeHtml(candidate.shape)}</span>
             </div>
             <div class="obstacle-candidate-actions">
-              <button class="success" title="确认并转为扣除区" onclick="event.stopPropagation(); confirmObstacleCandidate('${safeId}')">✓</button>
-              <button class="danger-outline" title="忽略候选" onclick="event.stopPropagation(); ignoreObstacleCandidate('${safeId}')">×</button>
+              <button class="success" title="确认并转为扣除区" data-candidate-id="${safeId}" onclick="event.stopPropagation(); confirmObstacleCandidate(this.dataset.candidateId)">✓</button>
+              <button class="danger-outline" title="忽略候选" data-candidate-id="${safeId}" onclick="event.stopPropagation(); ignoreObstacleCandidate(this.dataset.candidateId)">×</button>
             </div>
           </div>
         `;
@@ -3244,22 +3510,87 @@
       return id;
     }
 
+    function polygonsIntersect(a, b) {
+      if (!Array.isArray(a) || !Array.isArray(b) || a.length < 3 || b.length < 3) return false;
+      if (a.some(p => pointInPolygon(p, b))) return true;
+      if (b.some(p => pointInPolygon(p, a))) return true;
+      for (let i = 0; i < a.length; i++) {
+        const a1 = a[i];
+        const a2 = a[(i + 1) % a.length];
+        for (let j = 0; j < b.length; j++) {
+          const b1 = b[j];
+          const b2 = b[(j + 1) % b.length];
+          if (segmentsIntersect(a1, a2, b1, b2)) return true;
+        }
+      }
+      return false;
+    }
+
+    function polygonBBox(poly) {
+      let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+      for (const p of poly) { if (p.x < x0) x0 = p.x; if (p.y < y0) y0 = p.y; if (p.x > x1) x1 = p.x; if (p.y > y1) y1 = p.y; }
+      return { x0, y0, x1, y1 };
+    }
+
+    // poly 落在 containerPolygons(并集)内部的面积占比（网格采样估计）。
+    // 用面积而非顶点数，避免射线法对贴边顶点的方向性误判，也堵住"多顶点+大外伸"绕过。
+    function polygonInsideFraction(poly, containerPolygons, grid = 18) {
+      if (!Array.isArray(poly) || poly.length < 3 || !containerPolygons.length) return 0;
+      const b = polygonBBox(poly);
+      const w = b.x1 - b.x0, h = b.y1 - b.y0;
+      if (w <= 0 || h <= 0) return 0;
+      let inPoly = 0, inBoth = 0;
+      for (let j = 0; j < grid; j++) for (let i = 0; i < grid; i++) {
+        const pt = { x: b.x0 + (i + 0.5) / grid * w, y: b.y0 + (j + 0.5) / grid * h };
+        if (!pointInPolygon(pt, poly)) continue;
+        inPoly++;
+        if (pointInAnyPolygon(pt, containerPolygons)) inBoth++;
+      }
+      return inPoly === 0 ? 0 : inBoth / inPoly;
+    }
+
+    // 两多边形是否“真实重叠”（共边/共点不算）：用包围盒交集内的采样估计重叠面积。
+    function polygonsRealOverlap(a, b, minFrac = 0.02, grid = 16) {
+      if (!Array.isArray(a) || !Array.isArray(b) || a.length < 3 || b.length < 3) return false;
+      const ba = polygonBBox(a), bb = polygonBBox(b);
+      const ix0 = Math.max(ba.x0, bb.x0), iy0 = Math.max(ba.y0, bb.y0);
+      const ix1 = Math.min(ba.x1, bb.x1), iy1 = Math.min(ba.y1, bb.y1);
+      const w = ix1 - ix0, h = iy1 - iy0;
+      if (w <= 0 || h <= 0) return false; // 包围盒不相交（含共边/共点退化）
+      let both = 0;
+      for (let j = 0; j < grid; j++) for (let i = 0; i < grid; i++) {
+        const pt = { x: ix0 + (i + 0.5) / grid * w, y: iy0 + (j + 0.5) / grid * h };
+        if (pointInPolygon(pt, a) && pointInPolygon(pt, b)) both++;
+      }
+      const overlapArea = (both / (grid * grid)) * w * h;
+      const minArea = Math.min(Math.abs(polygonArea(a)), Math.abs(polygonArea(b)));
+      return minArea > 0 && overlapArea > minFrac * minArea;
+    }
+
     function candidateInsideClosedTiling(candidate) {
-      const center = candidate.center || polygonCenter(candidate.points);
+      const points = Array.isArray(candidate.points) ? candidate.points : [];
+      const center = candidate.center || polygonCenter(points);
       if (!center) return false;
       const tilingPolygons = state.regions
         .filter(region => region.type === 'tiling' && region.closed !== false && region.points.length >= 3)
         .map(region => region.points);
-      return pointInAnyPolygon(center, tilingPolygons);
+      if (!tilingPolygons.length) return false;
+      if (!pointInAnyPolygon(center, tilingPolygons)) return false;
+      // 按面积占比判断，而非顶点数：贴边候选不误杀、大幅外伸候选会被拒。
+      if (points.length >= 3 && polygonInsideFraction(points, tilingPolygons) < 0.9) return false;
+      return true;
     }
 
     function candidateOverlapsExistingHole(candidate) {
-      const center = candidate.center || polygonCenter(candidate.points);
+      const points = Array.isArray(candidate.points) ? candidate.points : [];
+      const center = candidate.center || polygonCenter(points);
       if (!center) return false;
       const radius = Math.max(candidate.radiusPx || 0, 10);
       return state.regions
         .filter(region => region.type === 'hole' && region.points.length >= 3)
         .some((region) => {
+          // 真实重叠面积判断（共边/共点不算重叠）。
+          if (points.length >= 3 && polygonsRealOverlap(points, region.points)) return true;
           const holeCenter = polygonCenter(region.points);
           return holeCenter && Math.hypot(center.x - holeCenter.x, center.y - holeCenter.y) < radius * 0.75;
         });
@@ -3314,6 +3645,7 @@
       if (state.obstacleDetection.runs.length > 20) {
         trimObstacleDetectionRuns();
       }
+      trimIgnoredObstacleCandidates();
 
       saveHistory();
       syncObstacleControls();
@@ -3327,6 +3659,142 @@
       return { ok: true, runId, candidatesCount: candidates.length };
     }
 
+    // 用选中的小框作为模板，归一化互相关(NCC)找出铺装区内所有同类柱/树。
+    // 比全局颜色阈值更适合 CAD 重复符号，且能命中空心方框/圆圈。
+    function detectObstacleByTemplateFromActiveRegion() {
+      const region = state.regions[state.activeRegionIndex];
+      if (!region || !Array.isArray(region.points) || region.points.length < 2) {
+        alert('请先框选并选中一个套住单个柱/树的小框，再点“以选中框为模板找同类”。');
+        return;
+      }
+      const xs = region.points.map(p => p.x);
+      const ys = region.points.map(p => p.y);
+      const bbox = { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
+      const result = detectObstacleByTemplate(bbox, { kind: state.obstacleDetection.settings.kind });
+      if (result.ok === false) { alert(result.message || '模板识别失败。'); return; }
+      if (!result.candidatesCount) alert('未找到与模板相似的对象。可换更清晰的模板框或调整阈值。');
+    }
+
+    function detectObstacleByTemplate(bbox, options = {}) {
+      normalizeObstacleDetectionState();
+      if (!image.naturalWidth || !offscreenCtx) return { ok: false, reason: 'image_not_loaded', message: '底图尚未加载完成。' };
+      if (state.scale.needsCalibration) return { ok: false, reason: 'scale_unverified', message: '请先完成比例尺标定，再做模板识别。' };
+      const tilingRegions = state.regions.filter(r => r.type === 'tiling' && r.closed !== false && r.points.length >= 3);
+      if (!tilingRegions.length) return { ok: false, reason: 'no_closed_tiling_region', message: '请先闭合至少一个铺装区域。' };
+
+      const W = image.naturalWidth, H = image.naturalHeight;
+      const tx0 = Math.max(0, Math.floor(bbox.x0)), ty0 = Math.max(0, Math.floor(bbox.y0));
+      const tw = Math.min(W - tx0, Math.round(bbox.x1 - bbox.x0));
+      const th = Math.min(H - ty0, Math.round(bbox.y1 - bbox.y0));
+      if (tw < 4 || th < 4) return { ok: false, reason: 'template_too_small', message: '模板框太小，请框选更大一点的单个柱/树。' };
+      if (tw > 500 || th > 500) return { ok: false, reason: 'template_too_large', message: '模板框过大，请只框住单个柱/树。' };
+
+      let imageData;
+      try { imageData = offscreenCtx.getImageData(0, 0, W, H); }
+      catch (err) { return { ok: false, reason: 'image_read_blocked', message: '底图跨域受限，浏览器禁止读取像素。' }; }
+      const data = imageData.data;
+      const grayAt = (x, y) => { const i = (y * W + x) * 4; return 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]; };
+
+      // 下采样模板到 ~24px 量级，控制计算量。
+      const ds = Math.max(1, Math.round(Math.max(tw, th) / 24));
+      const twd = Math.max(2, Math.floor(tw / ds)), thd = Math.max(2, Math.floor(th / ds));
+      const tmpl = new Float32Array(twd * thd);
+      let tSum = 0;
+      for (let j = 0; j < thd; j++) for (let i = 0; i < twd; i++) {
+        const v = grayAt(tx0 + i * ds, ty0 + j * ds); tmpl[j * twd + i] = v; tSum += v;
+      }
+      const tMean = tSum / (twd * thd);
+      let tVar = 0;
+      for (let k = 0; k < tmpl.length; k++) { const d = tmpl[k] - tMean; tmpl[k] = d; tVar += d * d; }
+      const tNorm = Math.sqrt(tVar);
+      if (tNorm < 1e-6) return { ok: false, reason: 'template_flat', message: '模板区域几乎没有图形特征，请换一个更清晰的模板框。' };
+
+      const roi = boundingBoxForRegions(tilingRegions);
+      const rx0 = Math.max(0, Math.floor(roi.x0)), ry0 = Math.max(0, Math.floor(roi.y0));
+      const rx1 = Math.min(W - tw, Math.ceil(roi.x1)), ry1 = Math.min(H - th, Math.ceil(roi.y1));
+      let step = Math.max(1, ds);
+      // 限制总计算量，必要时加大滑动步长。
+      while (((rx1 - rx0) / step) * ((ry1 - ry0) / step) * (twd * thd) > 60e6) step += 1;
+
+      const polygons = tilingRegions.map(r => r.points);
+      const threshold = Math.max(0.3, Math.min(0.98, Number(options.threshold) || 0.62));
+      const matches = [];
+      for (let y = ry0; y <= ry1; y += step) {
+        for (let x = rx0; x <= rx1; x += step) {
+          const cx = x + tw / 2, cy = y + th / 2;
+          if (!pointInAnyPolygon({ x: cx, y: cy }, polygons)) continue;
+          let wSum = 0;
+          for (let j = 0; j < thd; j++) for (let i = 0; i < twd; i++) wSum += grayAt(x + i * ds, y + j * ds);
+          const wMean = wSum / (twd * thd);
+          let dot = 0, wVar = 0;
+          for (let j = 0; j < thd; j++) for (let i = 0; i < twd; i++) {
+            const wv = grayAt(x + i * ds, y + j * ds) - wMean;
+            dot += wv * tmpl[j * twd + i]; wVar += wv * wv;
+          }
+          const wNorm = Math.sqrt(wVar);
+          if (wNorm < 1e-6) continue;
+          const ncc = dot / (tNorm * wNorm);
+          if (ncc >= threshold) matches.push({ x, y, score: ncc, cx, cy });
+        }
+      }
+
+      // 非极大值抑制：按分数降序，抑制与已选中心过近者。
+      matches.sort((a, b) => b.score - a.score);
+      const kept = [];
+      const minDist = Math.max(tw, th) * 0.6;
+      for (const m of matches) {
+        if (kept.some(k => Math.hypot(k.cx - m.cx, k.cy - m.cy) < minDist)) continue;
+        kept.push(m);
+        if (kept.length >= 500) break;
+      }
+
+      const mpp = Math.max(1e-9, Number(state.scale.metersPerPixel) || 0);
+      const runId = `obs-tpl-${Date.now()}`;
+      const kind = ['column', 'tree', 'mixed'].includes(options.kind) ? options.kind : 'column';
+      const newCandidates = [];
+      for (const m of kept) {
+        const candidate = normalizeObstacleCandidate({
+          id: newObstacleCandidateId(), runId, kind, status: 'pending', shape: 'rect',
+          points: rectPolygon(m.x, m.y, tw, th),
+          center: { x: round(m.cx, 2), y: round(m.cy, 2) },
+          radiusPx: Math.max(tw, th) / 2,
+          confidence: round(Math.max(0.35, Math.min(0.99, m.score)), 2),
+          source: 'template-match',
+          metrics: { widthM: round(tw * mpp, 3), heightM: round(th * mpp, 3), diameterM: round(Math.max(tw, th) * mpp, 3) }
+        });
+        if (candidateNearExisting(candidate)) continue;
+        state.obstacleDetection.candidates.push(candidate);
+        newCandidates.push(candidate);
+      }
+      state.obstacleDetection.runs.push({
+        id: runId, kind, mode: 'template-match', startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(),
+        candidatesCount: newCandidates.length, settings: { ...state.obstacleDetection.settings }, scaleSnapshot: { ...state.scale }
+      });
+      if (state.obstacleDetection.runs.length > 20) trimObstacleDetectionRuns();
+      trimIgnoredObstacleCandidates();
+      saveHistory();
+      syncObstacleControls();
+      renderAll();
+      emitHostChange('obstacle-template-detected');
+      return { ok: true, runId, candidatesCount: newCandidates.length };
+    }
+
+    function confirmObstacleCandidatesByConfidence() {
+      const pct = Number(els.obstacleConfThreshold && els.obstacleConfThreshold.value);
+      const threshold = (Number.isFinite(pct) ? pct : 80) / 100;
+      const targets = pendingObstacleCandidates().filter(c => c.confidence >= threshold);
+      if (!targets.length) { alert(`没有置信度不低于 ${Math.round(threshold * 100)}% 的待确认候选。`); return; }
+      if (!confirm(`将确认 ${targets.length} 个置信度 ≥ ${Math.round(threshold * 100)}% 的候选并转为扣除区，确认前请复核。`)) return;
+      let changed = false; const failures = [];
+      targets.forEach((c) => {
+        const r = confirmObstacleCandidate(c.id, { batch: true, silentAlert: true });
+        if (r && r.ok) changed = true; else failures.push(r);
+      });
+      if (failures.length) alert(`${failures.length} 个候选未能确认：${failures.slice(0, 3).map(f => f && (f.message || f.reason)).join('；')}`);
+      if (!changed) return;
+      saveHistory(); syncInputs(); renderAll(); emitHostChange('obstacle-candidates-confirmed-by-confidence');
+    }
+
     function detectObstacleCandidates(settings, tilingRegions, runId, options = {}) {
       const mpp = Math.max(1e-9, Number(state.scale.metersPerPixel) || 0);
       const minPx = Math.max(3, settings.minSizeM / mpp);
@@ -3334,7 +3802,17 @@
       const bbox = boundingBoxForRegions(tilingRegions);
       if (!bbox) return [];
 
-      const imageData = offscreenCtx.getImageData(0, 0, image.naturalWidth, image.naturalHeight);
+      let imageData;
+      try {
+        imageData = offscreenCtx.getImageData(0, 0, image.naturalWidth, image.naturalHeight);
+      } catch (err) {
+        return {
+          ok: false,
+          reason: 'image_read_blocked',
+          message: '底图跨域受限，浏览器禁止读取像素，无法做柱/树识别。请改用本地导入或带 CORS 头的底图。',
+          details: { error: String(err && err.message || err) }
+        };
+      }
       const data = imageData.data;
       const medianGray = estimateMedianGray(data);
       const sampleStep = image.naturalWidth * image.naturalHeight > 7000000 ? 3 : 2;
@@ -3728,7 +4206,13 @@
 
       const width = x1 - x0 + 1;
       const height = y1 - y0 + 1;
-      const imgData = offscreenCtx.getImageData(x0, y0, width, height);
+      let imgData;
+      try {
+        imgData = offscreenCtx.getImageData(x0, y0, width, height);
+      } catch (err) {
+        // 跨域底图读取被禁时，吸附降级为无像素，不影响框选交互。
+        return { pixels, medianGray: 255, darkCadBackground: false };
+      }
       const data = imgData.data;
       const medianGray = estimateMedianGray(data);
       const darkCadBackground = medianGray < 92;
@@ -3929,11 +4413,16 @@
     }
 
     // Interactive Drawing Event Listeners
-    els.planCanvas.addEventListener('mousedown', (event) => {
+    els.planCanvas.addEventListener('pointerdown', (event) => {
       const rect = els.planCanvas.getBoundingClientRect();
       const screenPt = { x: event.clientX - rect.left, y: event.clientY - rect.top };
 
 	      if (event.button === 2) return; // Right click handles elsewhere
+      // 触屏/笔：长按删除点（替代桌面右键删除）。
+      if ((event.pointerType === 'touch' || event.pointerType === 'pen') && !(state.mode === 'region' && state.holeShapeTool)) {
+        scheduleTouchLongPress(screenPt);
+      }
+      try { els.planCanvas.setPointerCapture(event.pointerId); } catch (err) {}
 
 	      if (state.mode === 'pan' || event.shiftKey || event.button === 1) {
 	        state.dragging = true;
@@ -3944,6 +4433,19 @@
 
       const imgPt = screenToImage(screenPt);
       const snappedPt = snapToDarkPixel(imgPt);
+
+      if (state.mode === 'region' && state.holeShapeTool) {
+        const start = clampImagePoint(imgPt);
+        state.holeShapeDraft = {
+          shape: state.holeShapeTool,
+          start,
+          current: start
+        };
+        state.dragTarget = null;
+        updatePlanCanvasCursor();
+        renderPlan();
+        return;
+      }
 
       // 1. Drag detection
       // A. Check grid origin in grid mode
@@ -3976,11 +4478,14 @@
             return;
           }
         }
-        for (let i = 0; i < activeRegion.points.length; i++) {
-          const pScreen = imageToScreen(activeRegion.points[i]);
-          if (Math.hypot(screenPt.x - pScreen.x, screenPt.y - pScreen.y) < 8) {
-            state.dragTarget = { type: 'point', rIdx: state.activeRegionIndex, pIdx: i };
-            return;
+        if (regionShapeKind(activeRegion) !== 'circle') {
+          for (let i = 0; i < activeRegion.points.length; i++) {
+            const pScreen = imageToScreen(activeRegion.points[i]);
+            if (Math.hypot(screenPt.x - pScreen.x, screenPt.y - pScreen.y) < 8) {
+              if (activeRegion.shapeKind) activeRegion.shapeKind = null;
+              state.dragTarget = { type: 'point', rIdx: state.activeRegionIndex, pIdx: i };
+              return;
+            }
           }
         }
       }
@@ -4022,6 +4527,7 @@
         if (activeRegion.closed) {
           activeRegion.closed = false;
         }
+        if (activeRegion.shapeKind) activeRegion.shapeKind = null;
         activeRegion.points.push({ x: round(snappedPt.x, 2), y: round(snappedPt.y, 2) });
         saveHistory();
         updateActiveRegionPanel();
@@ -4030,10 +4536,14 @@
       }
     });
 
-    els.planCanvas.addEventListener('mousemove', (event) => {
+    els.planCanvas.addEventListener('pointermove', (event) => {
       const rect = els.planCanvas.getBoundingClientRect();
       const screenPt = { x: event.clientX - rect.left, y: event.clientY - rect.top };
       state.mousePos = screenPt;
+      // 移动超过阈值即取消长按删除（视为拖动/绘制）。
+      if (touchLongPressStart && Math.hypot(screenPt.x - touchLongPressStart.x, screenPt.y - touchLongPressStart.y) > 8) {
+        cancelTouchLongPress();
+      }
 
       if (state.dragging && state.lastMouse) {
         state.pan.x += screenPt.x - state.lastMouse.x;
@@ -4047,6 +4557,13 @@
       const snappedPt = snapToDarkPixel(imgPt);
       const hadSnappedHover = state.snappedHoverPos.snapped;
       state.snappedHoverPos = snappedPt;
+
+      if (state.holeShapeDraft) {
+        state.snappedHoverPos = { ...imgPt, snapped: false };
+        state.holeShapeDraft.current = clampImagePoint(imgPt);
+        renderPlan();
+        return;
+      }
 
       if (state.dragTarget) {
         const tgt = state.dragTarget;
@@ -4077,10 +4594,18 @@
       }
     });
 
-	    window.addEventListener('mouseup', () => {
+	    function onPointerEnd(event) {
+	      cancelTouchLongPress();
+	      if (event && typeof event.pointerId === 'number') {
+	        try { els.planCanvas.releasePointerCapture(event.pointerId); } catch (err) {}
+	      }
 	      state.dragging = false;
 	      state.lastMouse = null;
 	      updatePlanCanvasCursor();
+        if (state.holeShapeDraft) {
+          finishHoleShapeDraft();
+          return;
+        }
 	      if (state.dragTarget) {
 	        const targetType = state.dragTarget.type;
 	        if (targetType === 'scale') {
@@ -4093,13 +4618,44 @@
 	          ? 'grid-origin-dragged'
 	          : (targetType === 'scale' ? 'scale-ruler-point-dragged' : 'region-point-dragged'));
 	      }
-	    });
+	    }
+	    window.addEventListener('pointerup', onPointerEnd);
+	    window.addEventListener('pointercancel', onPointerEnd);
+
+	    // 触屏/笔长按删除点：仅当按在已有顶点上（已置 dragTarget=point、未新增点）时生效。
+	    let touchLongPressTimer = null;
+	    let touchLongPressStart = null;
+	    function scheduleTouchLongPress(screenPt) {
+	      cancelTouchLongPress();
+	      touchLongPressStart = screenPt;
+	      touchLongPressTimer = setTimeout(handleTouchLongPress, 600);
+	    }
+	    function cancelTouchLongPress() {
+	      if (touchLongPressTimer) clearTimeout(touchLongPressTimer);
+	      touchLongPressTimer = null;
+	      touchLongPressStart = null;
+	    }
+	    function handleTouchLongPress() {
+	      touchLongPressTimer = null;
+	      touchLongPressStart = null;
+	      const tgt = state.dragTarget;
+	      if (!tgt || tgt.type !== 'point') return;
+	      const region = state.regions[tgt.rIdx];
+	      if (!region || !Array.isArray(region.points) || tgt.pIdx >= region.points.length) return;
+	      if (regionShapeKind(region) === 'circle') return;
+	      region.points.splice(tgt.pIdx, 1);
+	      state.dragTarget = null;
+	      saveHistory();
+	      renderAll();
+	      emitHostChange('region-point-deleted');
+	    }
 
     els.planCanvas.addEventListener('contextmenu', (event) => {
       event.preventDefault();
-      if (state.mode !== 'region') return;
-      const activeRegion = state.regions[state.activeRegionIndex];
-      if (!activeRegion || !activeRegion.points.length) return;
+	      if (state.mode !== 'region') return;
+	      const activeRegion = state.regions[state.activeRegionIndex];
+	      if (!activeRegion || !activeRegion.points.length) return;
+	      if (regionShapeKind(activeRegion) === 'circle') return;
 
       const rect = els.planCanvas.getBoundingClientRect();
       const screenPt = { x: event.clientX - rect.left, y: event.clientY - rect.top };
@@ -4140,6 +4696,10 @@
 	      state.mode = mode;
 	      state.dragging = false;
 	      state.lastMouse = null;
+        if (mode !== 'region') {
+          state.holeShapeTool = null;
+          state.holeShapeDraft = null;
+        }
 
       // Hide all control blocks
       ['region', 'calibrate', 'grid', 'pan'].forEach(key => {
@@ -4166,6 +4726,7 @@
 	        document.getElementById('tab-grid').classList.add('active');
 	      }
 
+        updateHoleShapeToolButtons();
 	      updatePlanCanvasCursor();
 	      renderAll();
 	    }
@@ -4173,6 +4734,8 @@
 	    function updatePlanCanvasCursor() {
 	      if (state.dragging) {
 	        els.planCanvas.style.cursor = 'grabbing';
+        } else if (state.mode === 'region' && state.holeShapeTool) {
+          els.planCanvas.style.cursor = 'crosshair';
 	      } else if (state.mode === 'pan') {
 	        els.planCanvas.style.cursor = 'grab';
 	      } else if (state.mode === 'select-edge') {
@@ -4208,6 +4771,138 @@
       updateActiveRegionPanel();
       renderAll();
       emitHostChange('region-added');
+    }
+
+    function clampImagePoint(point) {
+      if (!image.naturalWidth || !image.naturalHeight) return { x: round(point.x, 2), y: round(point.y, 2) };
+      return {
+        x: round(Math.max(0, Math.min(image.naturalWidth, point.x)), 2),
+        y: round(Math.max(0, Math.min(image.naturalHeight, point.y)), 2)
+      };
+    }
+
+    function normalizeHoleShapeKind(kind) {
+      return kind === 'circle' || kind === 'rect' ? kind : null;
+    }
+
+    function validShapeKindForPoints(kind, type, points) {
+      const normalized = normalizeHoleShapeKind(kind);
+      const pointCount = Array.isArray(points) ? points.length : 0;
+      if (type !== 'hole' || !normalized) return null;
+      if (normalized === 'rect' && pointCount !== 4) return null;
+      if (normalized === 'circle' && pointCount !== 48) return null;
+      return normalized;
+    }
+
+    function regionShapeKind(region) {
+      if (!region) return null;
+      return validShapeKindForPoints(region.shapeKind, region.type, region.points);
+    }
+
+    function shapeKindLabel(kind) {
+      if (kind === 'circle') return '圆形';
+      if (kind === 'rect') return '矩形';
+      return '多边形';
+    }
+
+    function addPresetHoleShape(shape) {
+      const kind = normalizeHoleShapeKind(shape);
+      if (!kind) return;
+      state.holeShapeTool = state.holeShapeTool === kind ? null : kind;
+      state.holeShapeDraft = null;
+      setMode('region');
+      updateHoleShapeToolButtons();
+      updatePlanCanvasCursor();
+      renderPlan();
+    }
+
+    function updateHoleShapeToolButtons() {
+      const rectBtn = document.getElementById('rectHoleToolBtn');
+      const circleBtn = document.getElementById('circleHoleToolBtn');
+      if (rectBtn) rectBtn.classList.toggle('shape-tool-active', state.holeShapeTool === 'rect');
+      if (circleBtn) circleBtn.classList.toggle('shape-tool-active', state.holeShapeTool === 'circle');
+    }
+
+    function cancelHoleShapeTool() {
+      if (!state.holeShapeTool && !state.holeShapeDraft) return false;
+      state.holeShapeTool = null;
+      state.holeShapeDraft = null;
+      updateHoleShapeToolButtons();
+      updatePlanCanvasCursor();
+      renderPlan();
+      return true;
+    }
+
+    function buildHoleShapePoints(shape, start, end) {
+      const x1 = start.x;
+      const y1 = start.y;
+      const x2 = end.x;
+      const y2 = end.y;
+      const minX = Math.min(x1, x2);
+      const maxX = Math.max(x1, x2);
+      const minY = Math.min(y1, y2);
+      const maxY = Math.max(y1, y2);
+      if (maxX - minX < 3 || maxY - minY < 3) return [];
+
+      if (shape === 'circle') {
+        const cx = (x1 + x2) / 2;
+        const cy = (y1 + y2) / 2;
+        const rx = Math.abs(x2 - x1) / 2;
+        const ry = Math.abs(y2 - y1) / 2;
+        const segments = 48;
+        const points = [];
+        for (let i = 0; i < segments; i++) {
+          const theta = (Math.PI * 2 * i) / segments;
+          points.push(clampImagePoint({
+            x: cx + Math.cos(theta) * rx,
+            y: cy + Math.sin(theta) * ry
+          }));
+        }
+        return points;
+      }
+
+      return [
+        clampImagePoint({ x: minX, y: minY }),
+        clampImagePoint({ x: maxX, y: minY }),
+        clampImagePoint({ x: maxX, y: maxY }),
+        clampImagePoint({ x: minX, y: maxY })
+      ];
+    }
+
+    function addHoleShapeRegion(shape, start, end) {
+      const kind = normalizeHoleShapeKind(shape);
+      const points = buildHoleShapePoints(kind, start, end);
+      if (!kind || points.length < 3) return false;
+      const id = nextRegionId();
+      state.regions.push({
+        id,
+        name: `${shapeKindLabel(kind)}扣除区域 ${state.regions.length + 1}`,
+        material: 'floating-floor',
+        type: 'hole',
+        shapeKind: kind,
+        points,
+        closed: true
+      });
+      state.activeRegionIndex = state.regions.length - 1;
+      return true;
+    }
+
+    function finishHoleShapeDraft() {
+      const draft = state.holeShapeDraft;
+      if (!draft) return false;
+      const ok = addHoleShapeRegion(draft.shape, draft.start, draft.current);
+      state.holeShapeDraft = null;
+      state.holeShapeTool = null;
+      updateHoleShapeToolButtons();
+      if (ok) {
+        saveHistory();
+        updateActiveRegionPanel();
+        renderAll();
+        emitHostChange('hole-shape-created');
+        return true;
+      }
+      renderPlan();
+      return false;
     }
 
     function closeActiveRegion() {
@@ -4255,6 +4950,7 @@
       if (r) {
         r.points = [];
         r.closed = false;
+        r.shapeKind = null;
         saveHistory();
         updateActiveRegionPanel();
         renderAll();
@@ -4380,6 +5076,7 @@
 	          els.regionType.value = 'hole';
 	        }
 	        r.type = els.regionType.value;
+          if (r.type !== 'hole') r.shapeKind = null;
 	        updateMaterialChips();
 	        renderRegionsList();
 	        renderGrid();
@@ -4451,10 +5148,10 @@
     }
 
     function syncScaleLengthInputs(value) {
-      const len = Math.max(0, Number(value) || 0);
-      if (len > 0) state.scale.lengthM = len;
-      els.scaleLength.value = state.scale.lengthM;
-      els.scaleLengthInline.value = state.scale.lengthM;
+      const v = Math.max(0, Number(value) || 0);
+      if (els.scaleLength) els.scaleLength.value = v;
+      if (els.scaleLengthInline) els.scaleLengthInline.value = v;
+      if (v > 0) state.scale.lengthM = lengthToMeters(v); // lengthM 始终存米
       updateScaleRulerControls();
     }
 
@@ -4469,6 +5166,7 @@
       state.scale.metersPerPixel = 0.024694444;
       state.scale.points = [{ x: 390, y: 1466 }, { x: 783, y: 1466 }];
       state.scale.lengthM = 9.70;
+      state.scale.lengthUnit = 'm';
       setScaleCalibrationState(false, 'drawing-title-block-1:175');
       saveHistory();
       syncInputs();
@@ -4481,12 +5179,14 @@
       const p1 = state.scale.points[0];
       const p2 = state.scale.points[1];
       const dist = Math.hypot(p2.x - p1.x, p2.y - p1.y);
-      const len = Number(els.scaleLengthInline.value || els.scaleLength.value);
-      if (dist > 0 && len > 0) {
-        els.scaleLength.value = len;
-        els.scaleLengthInline.value = len;
-        state.scale.metersPerPixel = len / dist;
-        state.scale.lengthM = len;
+      const rawLen = Number(els.scaleLengthInline.value || els.scaleLength.value);
+      const lenMeters = lengthToMeters(rawLen);
+      if (dist > 0 && lenMeters > 0) {
+        els.scaleLength.value = rawLen;
+        els.scaleLengthInline.value = rawLen;
+        checkScaleConsistency(lenMeters / dist, '两点标尺');
+        state.scale.metersPerPixel = lenMeters / dist;
+        state.scale.lengthM = lenMeters;
         setScaleCalibrationState(false, 'two-point-ruler');
         saveHistory();
         syncInputs();
@@ -4527,6 +5227,28 @@
         }
       }
       return bestDist < 18 ? bestSegment : null;
+    }
+
+    function drawHoleShapeDraftPreview() {
+      if (!state.holeShapeDraft) return;
+      const draft = state.holeShapeDraft;
+      const points = buildHoleShapePoints(draft.shape, draft.start, draft.current);
+      if (points.length < 3) return;
+      planCtx.save();
+      planCtx.beginPath();
+      points.forEach((point, idx) => {
+        const p = imageToScreen(point);
+        if (idx === 0) planCtx.moveTo(p.x, p.y);
+        else planCtx.lineTo(p.x, p.y);
+      });
+      planCtx.closePath();
+      planCtx.fillStyle = 'rgba(124,58,237,0.12)';
+      planCtx.fill();
+      planCtx.setLineDash([8, 5]);
+      planCtx.strokeStyle = '#7c3aed';
+      planCtx.lineWidth = 2;
+      planCtx.stroke();
+      planCtx.restore();
     }
 
     // Rendering Plan Canvas
@@ -4613,39 +5335,42 @@
           planCtx.stroke();
         }
 
-        // Draw point handles
-        r.points.forEach((pt, pIdx) => {
-          const p = imageToScreen(pt);
-          planCtx.beginPath();
-          planCtx.arc(p.x, p.y, 4.5, 0, Math.PI * 2);
-          planCtx.fillStyle = '#ffffff';
-          planCtx.fill();
-          planCtx.strokeStyle = isHole ? '#dc2626' : '#0284c7';
-          planCtx.lineWidth = 1.5;
-          planCtx.stroke();
-
-          if (isActive && !r.closed && pIdx === 0 && r.points.length >= 3) {
+        // Draw point handles. Circle holes keep semantic handles hidden to avoid noisy 48-point editing.
+        if (regionShapeKind(r) !== 'circle') {
+          r.points.forEach((pt, pIdx) => {
+            const p = imageToScreen(pt);
             planCtx.beginPath();
-            planCtx.arc(p.x, p.y, 8, 0, Math.PI * 2);
-            planCtx.strokeStyle = '#22c55e';
-            planCtx.lineWidth = 2.5;
+            planCtx.arc(p.x, p.y, 4.5, 0, Math.PI * 2);
+            planCtx.fillStyle = '#ffffff';
+            planCtx.fill();
+            planCtx.strokeStyle = isHole ? '#dc2626' : '#0284c7';
+            planCtx.lineWidth = 1.5;
             planCtx.stroke();
-            planCtx.font = '700 11px Arial, sans-serif';
-            planCtx.fillStyle = '#22c55e';
-            planCtx.fillText('闭合', p.x + 10, p.y - 10);
-          }
 
-          // Highlight active handle
-          if (state.dragTarget && state.dragTarget.type === 'point' && state.dragTarget.rIdx === rIdx && state.dragTarget.pIdx === pIdx) {
-            planCtx.beginPath();
-            planCtx.arc(p.x, p.y, 7, 0, Math.PI * 2);
-            planCtx.strokeStyle = '#eab308';
-            planCtx.stroke();
-          }
-        });
+            if (isActive && !r.closed && pIdx === 0 && r.points.length >= 3) {
+              planCtx.beginPath();
+              planCtx.arc(p.x, p.y, 8, 0, Math.PI * 2);
+              planCtx.strokeStyle = '#22c55e';
+              planCtx.lineWidth = 2.5;
+              planCtx.stroke();
+              planCtx.font = '700 11px Arial, sans-serif';
+              planCtx.fillStyle = '#22c55e';
+              planCtx.fillText('闭合', p.x + 10, p.y - 10);
+            }
+
+            // Highlight active handle
+            if (state.dragTarget && state.dragTarget.type === 'point' && state.dragTarget.rIdx === rIdx && state.dragTarget.pIdx === pIdx) {
+              planCtx.beginPath();
+              planCtx.arc(p.x, p.y, 7, 0, Math.PI * 2);
+              planCtx.strokeStyle = '#eab308';
+              planCtx.stroke();
+            }
+          });
+        }
       });
 
       drawObstacleCandidateOverlay();
+      drawHoleShapeDraftPreview();
 
       // Draw Grid Origin Handle (十字准星)
       if (state.mode === 'grid') {
@@ -4731,6 +5456,10 @@
         `当前点数: ${activeReg ? activeReg.points.length : 0}`
       ];
       if (state.mode === 'region' && activeReg) {
+        if (state.holeShapeTool) {
+          compactDetails.push(`${shapeKindLabel(state.holeShapeTool)}扣除`);
+          fullDetails.push(`正在拖拽创建${shapeKindLabel(state.holeShapeTool)}扣除区`);
+        }
         if (activeReg.closed) {
           compactDetails.push('已闭合');
           fullDetails.push('当前区域已闭合');
@@ -5278,6 +6007,54 @@
         els.cutsList.innerHTML = '暂无裁切件。';
       }
       updateDeliveryGatePanel();
+      renderQuotePanel();
+    }
+
+    // 报价估算：设计器侧产出 gantang-quote.v1，可被宿主 BOM/报价直接消费。
+    function buildQuote() {
+      const byMat = buildTakeoffByMaterial();
+      const mode = quoteState.mode === 'per-area' ? 'per-area' : 'per-tile';
+      const lines = Object.values(byMat).map((row) => {
+        const unitPrice = Math.max(0, Number(quoteState.unitPrices[row.material]) || 0);
+        const qty = mode === 'per-area' ? row.netCoveredArea_m2 : row.totalTilesCount;
+        return {
+          material: row.material,
+          mode,
+          unitPrice,
+          totalTilesCount: row.totalTilesCount,
+          netCoveredArea_m2: row.netCoveredArea_m2,
+          subtotal: round(unitPrice * qty, 2)
+        };
+      });
+      return {
+        schema: 'gantang-quote.v1',
+        currency: 'CNY',
+        mode,
+        lines,
+        total: round(lines.reduce((s, l) => s + l.subtotal, 0), 2)
+      };
+    }
+    function renderQuotePanel() {
+      if (!els.quotePanel) return;
+      if (els.quoteMode) els.quoteMode.value = quoteState.mode;
+      const q = buildQuote();
+      if (!q.lines.length) { els.quotePanel.innerHTML = '设置单价后显示分材料小计与合计。'; return; }
+      const unitLabel = q.mode === 'per-area' ? '元/㎡' : '元/块';
+      els.quotePanel.innerHTML = q.lines.map((l) => {
+        const qty = q.mode === 'per-area' ? (l.netCoveredArea_m2.toFixed(2) + '㎡') : (l.totalTilesCount + '块');
+        return `<div class="cut-group-item"><span>${escapeHtml(l.material)} · ${qty}</span>`
+          + `<span><input type="number" min="0" step="0.01" value="${l.unitPrice || ''}" placeholder="${unitLabel}" style="width:84px;" data-material="${escapeHtml(l.material)}" onchange="setMaterialPrice(this.dataset.material, this.value)"> = <strong>${l.subtotal.toFixed(2)}</strong></span></div>`;
+      }).join('') + `<div class="cut-group-item"><strong>合计</strong><strong>${q.total.toFixed(2)} 元</strong></div>`;
+    }
+    function setMaterialPrice(material, value) {
+      quoteState.unitPrices[material] = Math.max(0, Number(value) || 0);
+      renderQuotePanel();
+      emitHostChange('quote-price-changed');
+    }
+    function onQuoteChange() {
+      quoteState.mode = (els.quoteMode && els.quoteMode.value === 'per-area') ? 'per-area' : 'per-tile';
+      renderQuotePanel();
+      emitHostChange('quote-mode-changed');
     }
 
     function renderAll() {
@@ -5411,6 +6188,7 @@
           metersPerPixel: state.scale.metersPerPixel,
           points: state.scale.points,
           lengthM: state.scale.lengthM,
+          lengthUnit: currentScaleUnit(),
           needsCalibration: state.scale.needsCalibration,
           source: state.scale.source
         },
@@ -5424,18 +6202,21 @@
           name: r.name,
           material: r.material,
           type: r.type,
+          shapeKind: regionShapeKind(r),
           sourceCandidateId: r.sourceCandidateId || null,
           closed: r.closed,
           points_px: r.points
         })),
         obstacleDetection: {
           schema: state.obstacleDetection.schema || 'gantang-obstacle-detection.v1',
-          version: state.obstacleDetection.version || 'v20260616-1508',
+          version: state.obstacleDetection.version || APP_VERSION,
           summary: obstacleDetectionSummary(),
           runs: state.obstacleDetection.runs,
           candidates: state.obstacleDetection.candidates
         },
         takeoff: buildTakeoffSummary(),
+        quote: buildQuote(),
+        pricing: { mode: quoteState.mode, unitPrices: { ...quoteState.unitPrices } },
         warnings: validation.errors.concat(validation.warnings)
       };
     }
@@ -5454,7 +6235,8 @@
 	        gridRotation: state.gridRotation,
 	        tileSize: state.tileSize,
 	        autoSnap: state.autoSnap,
-	        showMagnifier: state.showMagnifier
+	        showMagnifier: state.showMagnifier,
+	        pricing: { mode: quoteState.mode, unitPrices: { ...quoteState.unitPrices } }
 	      };
 	      try {
 	        localStorage.setItem('gantang_project_draft', JSON.stringify(draft));
@@ -5568,6 +6350,8 @@
 	      } else if (e.ctrlKey && (e.key === 'y' || (e.shiftKey && e.key === 'Z'))) {
 	        e.preventDefault();
 	        redo();
+	      } else if (e.key === 'Escape' && cancelHoleShapeTool()) {
+	        e.preventDefault();
 	      } else if (e.key === 'Escape' && document.body.classList.contains('plan-focus-active')) {
 	        e.preventDefault();
 	        exitPlanFullscreen();
@@ -5601,6 +6385,108 @@
       }
     }
 
+    // ---- 多项目管理（localStorage；配额超限时降级为只存几何） ----
+    function getProjectsStore() {
+      try {
+        const raw = localStorage.getItem(PROJECTS_STORAGE_KEY);
+        const parsed = raw ? JSON.parse(raw) : {};
+        return parsed && typeof parsed === 'object' ? parsed : {};
+      } catch (err) { return {}; }
+    }
+    function saveProjectsStore(store) {
+      try {
+        localStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(store));
+        return true;
+      } catch (err) {
+        try {
+          const slim = {};
+          Object.keys(store).forEach(id => {
+            slim[id] = { ...store[id], data: { ...store[id].data, imageDataUrl: null } };
+          });
+          localStorage.setItem(PROJECTS_STORAGE_KEY, JSON.stringify(slim));
+          alert('项目过多或底图过大，已只保存几何与参数，未内嵌底图；重新打开后需重新导入底图。');
+          return true;
+        } catch (e2) {
+          alert('浏览器存储已满，项目保存失败。请删除旧项目或用「保存项目」导出 JSON 备份。');
+          return false;
+        }
+      }
+    }
+    function newProjectId() {
+      return 'proj-' + Date.now() + '-' + Math.random().toString(16).slice(2, 8);
+    }
+    function renderProjectSelect() {
+      if (!els.projectSelect) return;
+      const store = getProjectsStore();
+      const ids = Object.keys(store).sort((a, b) => (store[b].updatedAt || '').localeCompare(store[a].updatedAt || ''));
+      els.projectSelect.innerHTML = ['<option value="">— 未命名 —</option>']
+        .concat(ids.map(id => `<option value="${escapeHtml(id)}">${escapeHtml(store[id].name || id)}</option>`))
+        .join('');
+      els.projectSelect.value = activeProjectId && store[activeProjectId] ? activeProjectId : '';
+    }
+    function saveCurrentProjectPrompt() {
+      const store = getProjectsStore();
+      const current = activeProjectId && store[activeProjectId] ? store[activeProjectId] : null;
+      const name = prompt('项目名称：', current ? current.name : '');
+      if (name === null) return;
+      const trimmed = String(name).trim();
+      if (!trimmed) { alert('项目名称不能为空。'); return; }
+      let id = activeProjectId && store[activeProjectId] ? activeProjectId : null;
+      if (!id) {
+        const existing = Object.keys(store).find(k => store[k].name === trimmed);
+        id = existing || newProjectId();
+      }
+      store[id] = { id, name: trimmed, updatedAt: new Date().toISOString(), data: exportProjectData({ exportMode: 'draft' }) };
+      if (saveProjectsStore(store)) {
+        activeProjectId = id;
+        try { localStorage.setItem(ACTIVE_PROJECT_KEY, id); } catch (e) {}
+        renderProjectSelect();
+        if (els.planStatus) els.planStatus.textContent = `已保存项目「${trimmed}」`;
+      }
+    }
+    function loadSelectedProject(id) {
+      if (!id) return;
+      const store = getProjectsStore();
+      const rec = store[id];
+      if (!rec || !rec.data) { alert('项目不存在。'); renderProjectSelect(); return; }
+      const hasGeom = state.regions.some(r => r.points && r.points.length > 0);
+      if (hasGeom && !confirm('切换项目会替换当前画面，未保存的改动会丢失，是否继续？')) {
+        renderProjectSelect();
+        return;
+      }
+      try {
+        applyProjectData(rec.data, { source: 'project-manager' });
+        activeProjectId = id;
+        try { localStorage.setItem(ACTIVE_PROJECT_KEY, id); } catch (e) {}
+        renderProjectSelect();
+      } catch (err) {
+        alert('载入项目失败：' + (err.message || err));
+      }
+    }
+    function deleteCurrentProject() {
+      const store = getProjectsStore();
+      if (!activeProjectId || !store[activeProjectId]) { alert('当前没有已保存的项目可删除。'); return; }
+      const name = store[activeProjectId].name || activeProjectId;
+      if (!confirm(`确认删除项目「${name}」？此操作不可撤销。`)) return;
+      delete store[activeProjectId];
+      saveProjectsStore(store);
+      activeProjectId = null;
+      try { localStorage.removeItem(ACTIVE_PROJECT_KEY); } catch (e) {}
+      renderProjectSelect();
+    }
+    function newProject() {
+      const hasGeom = state.regions.some(r => r.points && r.points.length > 0);
+      if (hasGeom && !confirm('新建空白项目会清空当前画面，未保存的改动会丢失，是否继续？')) return;
+      resetRegionsForNewDrawing();
+      activeProjectId = null;
+      try { localStorage.removeItem(ACTIVE_PROJECT_KEY); } catch (e) {}
+      saveHistory();
+      syncInputs();
+      renderAll();
+      renderProjectSelect();
+      emitHostChange('project-new');
+    }
+
     function triggerLoadProject() {
       document.getElementById('fileInput').click();
     }
@@ -5609,58 +6495,142 @@
       document.getElementById('drawingInput').click();
     }
 
+    const MAX_DECODE_DIMENSION = 4000; // 解码栅格最长边上限，控制内存与识别采样
+
+    function applyImportedImage(fileName, dataUrl, mimeType, kind, opts = {}) {
+      currentImagePath = fileName;
+      currentImageDataUrl = dataUrl;
+      currentImageMimeType = mimeType;
+      currentImageKind = kind;
+      currentImageSource = dataUrl;
+      resetRegionsForNewDrawing();
+      image.src = dataUrl;
+      if (opts.suggestedMpp && Number.isFinite(opts.suggestedMpp) && opts.suggestedMpp > 0) {
+        state.scale.metersPerPixel = opts.suggestedMpp;
+        // DXF 单位推算只作“建议比例”，仍标未校准，必须人工确认。
+        setScaleCalibrationState(true, 'dxf-units-suggested');
+      }
+      saveHistory();
+      syncInputs();
+      emitHostChange('drawing-imported');
+    }
+
     function importDrawing(event) {
       const file = event.target.files[0];
       event.target.value = '';
       if (!file) return;
 
       const ext = file.name.split('.').pop().toLowerCase();
-      const isRasterImage = file.type.startsWith('image/') && DIRECT_DRAWING_EXTENSIONS.includes(ext)
-        || DIRECT_DRAWING_EXTENSIONS.includes(ext);
+      const hasExistingGeometry = state.regions.some(r => r.points && r.points.length > 0);
+      if (hasExistingGeometry && !confirm('导入新图纸会清空当前框选区域和标尺点，是否继续？')) {
+        return;
+      }
 
-      if (isRasterImage) {
-        const hasExistingGeometry = state.regions.some(r => r.points && r.points.length > 0);
-        if (hasExistingGeometry && !confirm('导入新图纸会清空当前框选区域和标尺点，是否继续？')) {
-          return;
-        }
-
+      if (DIRECT_DRAWING_EXTENSIONS.includes(ext)) {
         const reader = new FileReader();
         reader.onload = (e) => {
-          const dataUrl = e.target.result;
-          rememberImportedDrawing(file, dataUrl);
-          currentImagePath = file.name;
-          currentImageDataUrl = dataUrl;
-          currentImageMimeType = file.type || mimeFromExtension(ext);
-          currentImageKind = 'imported-raster';
-          currentImageSource = dataUrl;
-          resetRegionsForNewDrawing();
-          image.src = dataUrl;
-          saveHistory();
-          syncInputs();
-          emitHostChange('drawing-imported');
+          rememberImportedDrawing(file, e.target.result);
+          applyImportedImage(file.name, e.target.result, file.type || mimeFromExtension(ext), 'imported-raster');
         };
         reader.readAsDataURL(file);
         return;
       }
-
+      if (ext === 'pdf') { importPdfDrawing(file); return; }
+      if (ext === 'dxf') { importDxfDrawing(file); return; }
       showUnsupportedDrawingFormatNotice(file.name, ext);
+    }
+
+    function importPdfDrawing(file) {
+      if (!window.pdfjsLib) { alert('PDF 组件未加载（vendor/pdf.min.js）。'); return; }
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        pdfjsLib.getDocument({ data: new Uint8Array(e.target.result) }).promise.then((pdf) => {
+          let pageNum = 1;
+          if (pdf.numPages > 1) {
+            const ans = prompt(`该 PDF 共 ${pdf.numPages} 页，导入第几页？`, '1');
+            if (ans === null) return null;
+            pageNum = Math.min(pdf.numPages, Math.max(1, parseInt(ans, 10) || 1));
+          }
+          return pdf.getPage(pageNum).then((page) => {
+            const base = page.getViewport({ scale: 1 });
+            const fit = Math.min(MAX_DECODE_DIMENSION / base.width, MAX_DECODE_DIMENSION / base.height, 4);
+            const viewport = page.getViewport({ scale: Math.max(0.01, fit) });
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.round(viewport.width);
+            canvas.height = Math.round(viewport.height);
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+            return page.render({ canvasContext: ctx, viewport }).promise.then(() => {
+              applyImportedImage(file.name.replace(/\.pdf$/i, '') + `-p${pageNum}.png`, canvas.toDataURL('image/png'), 'image/png', 'imported-pdf-raster');
+            });
+          });
+        }).catch((err) => {
+          alert('PDF 解析失败：' + (err && err.message || err));
+        });
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    const DXF_UNIT_TO_METERS = { 1: 0.0254, 2: 0.3048, 4: 0.001, 5: 0.01, 6: 1 }; // in/ft/mm/cm/m
+    function importDxfDrawing(file) {
+      const Helper = window.dxf && (window.dxf.Helper || window.dxf.default);
+      if (!Helper) { alert('DXF 组件未加载（vendor/dxf.js）。'); return; }
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        let svg, parsed;
+        try {
+          const helper = new Helper(e.target.result);
+          svg = helper.toSVG();
+          parsed = helper.parsed;
+        } catch (err) {
+          alert('DXF 解析失败：' + (err && err.message || err));
+          return;
+        }
+        const vb = svg.match(/viewBox="([\d.eE+-]+) ([\d.eE+-]+) ([\d.eE+-]+) ([\d.eE+-]+)"/);
+        const vbW = vb ? parseFloat(vb[3]) : 0;
+        const vbH = vb ? parseFloat(vb[4]) : 0;
+        if (!(vbW > 0) || !(vbH > 0)) { alert('DXF 没有可识别的图形范围。'); return; }
+        const fit = Math.min(MAX_DECODE_DIMENSION / vbW, MAX_DECODE_DIMENSION / vbH, 8);
+        const cw = Math.max(1, Math.round(vbW * Math.max(0.001, fit)));
+        const ch = Math.max(1, Math.round(vbH * Math.max(0.001, fit)));
+        let sizedSvg = svg.replace('<svg ', `<svg width="${cw}" height="${ch}" `);
+        if (!/xmlns=/.test(sizedSvg)) sizedSvg = sizedSvg.replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" ');
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = cw; canvas.height = ch;
+          const ctx = canvas.getContext('2d');
+          ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cw, ch);
+          ctx.drawImage(img, 0, 0, cw, ch);
+          let dataUrl;
+          try { dataUrl = canvas.toDataURL('image/png'); }
+          catch (err) { alert('DXF 渲染失败（画布导出）。'); return; }
+          let suggestedMpp = 0;
+          try {
+            // dxf 库把 $INSUNITS 归一化为 header.insUnits（数值码）。
+            const insunits = parsed && parsed.header && (parsed.header.insUnits ?? parsed.header['$INSUNITS']);
+            const f = DXF_UNIT_TO_METERS[insunits];
+            if (f) suggestedMpp = (vbW * f) / cw;
+          } catch (e2) {}
+          applyImportedImage(file.name.replace(/\.dxf$/i, '') + '.png', dataUrl, 'image/png', 'imported-dxf-raster', { suggestedMpp });
+        };
+        img.onerror = () => alert('DXF 渲染失败（SVG 光栅化）。');
+        img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(sizedSvg);
+      };
+      reader.readAsText(file);
     }
 
     function showUnsupportedDrawingFormatNotice(fileName, ext) {
       const lowerExt = String(ext || '').toLowerCase();
-      if (lowerExt === 'pdf') {
-        alert(`不能直接导入 ${fileName}。请先运行本地转换命令生成 PNG，再用“导入图纸”导入：\n\nnpm run prepare:plan-import -- --source "${fileName}" --pdf-page 1 --out-dir gantang-grid-designer/import-batch`);
+      if (lowerExt === 'dwg') {
+        alert(`不能直接导入 ${fileName}。\nDWG 是 AutoCAD 私有格式，本工具不直接解析。请先转成 DXF 或 PDF 再导入：\n• DWG → DXF：用 DWG TrueView / ODA File Converter（均免费）。\n• DWG → PDF：在 CAD 里“打印/输出成 PDF”。\n本工具已支持直接导入：DXF / PDF / PNG / JPG / WEBP / SVG。`);
         return;
       }
       if (['doc', 'docx'].includes(lowerExt)) {
-        alert(`不能直接导入 ${fileName}。请先将 Word 转成 PDF/PNG，再导入 PNG。`);
+        alert(`不能直接导入 ${fileName}。请先将 Word 转成 PDF，再用“导入图纸”导入（PDF 现已支持直接导入）。`);
         return;
       }
-      if (['dwg', 'dxf'].includes(lowerExt)) {
-        alert(`不能直接导入 ${fileName}。CAD/DXF 请走预处理链路生成可核对 PNG/SVG 或 tile-layout 模型后再进入本工具。`);
-        return;
-      }
-      alert('暂不支持该文件格式。当前网页主入口只直接支持 PNG/JPG/JPEG/WEBP/SVG。');
+      alert('暂不支持该文件格式。当前直接支持 PNG/JPG/JPEG/WEBP/SVG/PDF/DXF；DWG 请先转 DXF。');
     }
 
     function mimeFromExtension(ext) {
@@ -5698,6 +6668,7 @@
         state.scale.metersPerPixel = loaded.scale.metersPerPixel || state.scale.metersPerPixel;
         state.scale.points = loaded.scale.points || [];
         state.scale.lengthM = loaded.scale.lengthM || 9.70;
+        state.scale.lengthUnit = loaded.scale.lengthUnit || 'm';
         state.scale.needsCalibration = loaded.scale.needsCalibration === false ? false : true;
         state.scale.source = loaded.scale.source || 'loaded-project';
       } else if (loaded.calibration) {
@@ -5705,6 +6676,13 @@
         setScaleCalibrationState(false, 'legacy-calibration');
       }
       normalizeScaleState();
+
+      // 恢复报价输入（单价 + 计价方式），避免项目/JSON 往返丢失。
+      if (loaded.pricing && typeof loaded.pricing === 'object') {
+        quoteState.mode = loaded.pricing.mode === 'per-area' ? 'per-area' : 'per-tile';
+        quoteState.unitPrices = (loaded.pricing.unitPrices && typeof loaded.pricing.unitPrices === 'object')
+          ? { ...loaded.pricing.unitPrices } : {};
+      }
 
       if (loaded.grid) {
         state.gridOrigin = loaded.grid.origin_px || state.gridOrigin;
@@ -5715,15 +6693,20 @@
       }
 
       if (loaded.regions) {
-        state.regions = loaded.regions.map(r => ({
-          id: r.id || 'region',
-          name: r.name || '导入区域',
-          material: r.material || 'floating-floor',
-          type: r.sourceCandidateId ? 'hole' : (r.type || 'tiling'),
-          sourceCandidateId: r.sourceCandidateId || null,
-          points: r.points_px || r.points || [],
-          closed: r.closed ?? true
-        }));
+        state.regions = loaded.regions.map(r => {
+          const points = r.points_px || r.points || [];
+          const type = r.sourceCandidateId ? 'hole' : (r.type || 'tiling');
+          return {
+            id: r.id || 'region',
+            name: r.name || '导入区域',
+            material: r.material || 'floating-floor',
+            type,
+            shapeKind: validShapeKindForPoints(r.shapeKind, type, points),
+            sourceCandidateId: r.sourceCandidateId || null,
+            points,
+            closed: r.closed ?? true
+          };
+        });
         state.activeRegionIndex = 0;
       }
       normalizeObstacleDetectionState(obstacleDetectionStateForLoadedProject(loaded));
@@ -5778,7 +6761,7 @@
       csv += '\n';
 
       csv += '3. 区域与孔洞列表\n';
-      csv += '区域ID,区域名称,材料,类型,顶点数量,面积(㎡)\n';
+      csv += '区域ID,区域名称,材料,类型,几何,顶点数量,面积(㎡)\n';
       state.regions.forEach(r => {
         const rArea = r.points.length >= 3 ? Math.abs(polygonArea(r.points.map(p => ({
           x: p.x * state.scale.metersPerPixel,
@@ -5789,6 +6772,7 @@
           csvCell(r.name),
           csvCell(r.material),
           csvCell(r.type === 'hole' ? '扣除区域' : '铺装区域'),
+          csvCell(r.type === 'hole' ? shapeKindLabel(regionShapeKind(r)) : '多边形'),
           r.points.length,
           rArea.toFixed(3)
         ].join(',') + '\n';
@@ -5815,6 +6799,17 @@
       Object.keys(groups).forEach(key => {
         csv += `${csvCell(key)},${groups[key].count},${csvCell(groups[key].coords.join(' '))}\n`;
       });
+      csv += '\n';
+
+      // 5. 柱/树候选审计：把识别/确认/忽略计数写进量单，让"是否扣除障碍"可追溯。
+      const obsAudit = obstacleDetectionSummary();
+      csv += '5. 柱/树候选审计\n';
+      csv += '已识别(候选),已确认(转扣除区),已忽略,待确认\n';
+      csv += `${obsAudit.total},${obsAudit.confirmed},${obsAudit.ignored},${obsAudit.pending}\n`;
+      if (obsAudit.total > 0 && obsAudit.confirmed === 0 && obsAudit.ignored > 0) {
+        csv += `${csvCell('注意：识别到柱/树候选但全部忽略、未做障碍扣减，请业务确认现场确实无需扣除')}\n`;
+      }
+      csv += '\n';
 
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
       const a = document.createElement('a');
@@ -5870,8 +6865,13 @@
     function printReport() {
       if (!assertDeliveryReady('打印 / PDF')) return;
       // 1. Convert plan and grid canvases to images for print preview
-      document.getElementById('printImgPlan').src = els.planCanvas.toDataURL('image/png');
-      document.getElementById('printImgGrid').src = els.gridCanvas.toDataURL('image/png');
+      try {
+        document.getElementById('printImgPlan').src = els.planCanvas.toDataURL('image/png');
+        document.getElementById('printImgGrid').src = els.gridCanvas.toDataURL('image/png');
+      } catch (err) {
+        alert('底图跨域受限，浏览器禁止导出画布图像，无法生成打印预览。请改用本地导入或带 CORS 头的底图。');
+        return;
+      }
 
       // 2. Populate tables
       const coveredArea = generatedCells.reduce((sum, c) => sum + c.area_m2, 0);
@@ -5905,6 +6905,7 @@
             <td>${escapeHtml(r.name)}</td>
             <td>${escapeHtml(r.material)}</td>
             <td>${r.type === 'hole' ? '扣除区域' : '铺装区域'}</td>
+            <td>${escapeHtml(r.type === 'hole' ? shapeKindLabel(regionShapeKind(r)) : '多边形')}</td>
             <td>${r.points.length}</td>
           </tr>
         `;
@@ -5940,9 +6941,86 @@
 
 	      document.getElementById('printMeta').textContent = `生成时间: ${new Date().toLocaleString()} | 项目底图: ${currentImagePath}`;
 
+      // 柱/树候选审计
+      const obsAudit = obstacleDetectionSummary();
+      document.getElementById('ptObstacleBody').innerHTML =
+        `<tr><td>${obsAudit.total}</td><td>${obsAudit.confirmed}</td><td>${obsAudit.ignored}</td><td>${obsAudit.pending}</td></tr>`;
+      const obsNote = document.getElementById('ptObstacleNote');
+      if (obsAudit.total > 0 && obsAudit.confirmed === 0 && obsAudit.ignored > 0) {
+        obsNote.textContent = '注意：识别到柱/树候选但全部忽略、未做障碍扣减，请业务确认现场确实无需扣除。';
+        obsNote.style.display = 'block';
+      } else {
+        obsNote.textContent = '';
+        obsNote.style.display = 'none';
+      }
+
       // 3. Trigger print dialog
       document.getElementById('printReport').dataset.printReady = 'true';
       window.print();
+    }
+
+    // 一键导出 PDF（vendor jsPDF，离线）。门禁不过时按钮已禁用，这里再次兜底。
+    function downloadReportPDF() {
+      if (!assertDeliveryReady('下载 PDF')) return;
+      const jsPDFCtor = window.jspdf && window.jspdf.jsPDF;
+      if (!jsPDFCtor) { alert('PDF 组件未加载（vendor/jspdf.umd.min.js）。'); return; }
+      let planImg, gridImg;
+      try {
+        planImg = els.planCanvas.toDataURL('image/png');
+        gridImg = els.gridCanvas.toDataURL('image/png');
+      } catch (err) {
+        alert('底图跨域受限，浏览器禁止导出画布图像，无法生成 PDF。请改用本地导入或带 CORS 头的底图。');
+        return;
+      }
+      const coveredArea = generatedCells.reduce((sum, c) => sum + c.area_m2, 0);
+      const totalTileArea = generatedCells.length * state.tileSize * state.tileSize;
+      const wasteArea = totalTileArea - coveredArea;
+      const wastePct = (wasteArea / Math.max(1e-9, totalTileArea)) * 100;
+      const fullCount = generatedCells.filter(c => c.status === 'full').length;
+      const cutCount = generatedCells.filter(c => c.status === 'cut').length;
+
+      const doc = new jsPDFCtor({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+      const pageW = doc.internal.pageSize.getWidth();
+      const margin = 36;
+      let y = margin;
+      doc.setFontSize(16);
+      doc.text('Gantang Floating Floor Layout Report', margin, y); y += 22;
+      doc.setFontSize(10);
+      doc.text(`Generated: ${new Date().toLocaleString()}`, margin, y); y += 14;
+      doc.text(`Image: ${currentImagePath}`, margin, y); y += 14;
+      doc.text(`Scale: ${state.scale.metersPerPixel.toFixed(6)} m/px   Tile: ${state.tileSize.toFixed(2)} m`, margin, y); y += 18;
+
+      const lines = [
+        `Net covered area: ${coveredArea.toFixed(3)} m2`,
+        `Total tile area: ${totalTileArea.toFixed(3)} m2`,
+        `Full tiles: ${fullCount}    Cut tiles: ${cutCount}    Total: ${generatedCells.length}`,
+        `Waste area: ${wasteArea.toFixed(3)} m2   Waste rate: ${wastePct.toFixed(1)} %`
+      ];
+      lines.forEach((ln) => { doc.text(ln, margin, y); y += 14; });
+      const holeShapeCounts = state.regions.reduce((acc, region) => {
+        if (region.type !== 'hole') return acc;
+        const key = regionShapeKind(region) || 'polygon';
+        acc[key] = (acc[key] || 0) + 1;
+        return acc;
+      }, { rect: 0, circle: 0, polygon: 0 });
+      doc.text(`Hole geometry: rect ${holeShapeCounts.rect || 0}, circle ${holeShapeCounts.circle || 0}, polygon ${holeShapeCounts.polygon || 0}`, margin, y); y += 14;
+      y += 6;
+
+      const imgW = pageW - margin * 2;
+      const placeImg = (dataUrl, label) => {
+        if (!dataUrl) return;
+        try {
+          const props = doc.getImageProperties(dataUrl);
+          const h = Math.min(320, imgW * props.height / props.width);
+          if (y + h + 16 > doc.internal.pageSize.getHeight() - margin) { doc.addPage(); y = margin; }
+          doc.setFontSize(11); doc.text(label, margin, y); y += 12;
+          doc.addImage(dataUrl, 'PNG', margin, y, imgW, h); y += h + 16;
+        } catch (err) {}
+      };
+      placeImg(planImg, 'Plan & selections');
+      placeImg(gridImg, 'Tile layout');
+
+      doc.save(`gantang-report-${new Date().toISOString().slice(0,10)}.pdf`);
     }
 
     // Sutherland-Hodgman Polygon Clipping (JS)
